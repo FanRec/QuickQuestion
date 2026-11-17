@@ -1,0 +1,88 @@
+.chat-root {
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+}
+
+.chat-card {
+  border-radius: 16px;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 6px 14px;
+  flex: none;
+}
+
+.chat-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
+
+.chat-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-bubble {
+  align-self: flex-start;
+  max-width: 92%;
+  padding: 9px 12px;
+  border-radius: var(--radius-bubble);
+  background: var(--bubble-ai);
+  color: var(--bubble-ai-text);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  animation: bubble-in var(--dur) var(--ease);
+}
+
+.chat-input-row {
+  padding: 8px 12px 12px;
+  flex: none;
+}
+
+.chat-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-control);
+  border: 0.5px solid var(--separator);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.chat-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.chat-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

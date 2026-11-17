@@ -1,0 +1,26 @@
+.icon-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex: none;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+
+.icon-button:hover {
+  background: var(--bubble-ai);
+  color: var(--text-primary);
+}
+
+.icon-button:active {
+  transform: scale(0.92);
+}
+
+.icon-button--accent:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
