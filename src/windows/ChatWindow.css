@@ -48,13 +48,54 @@
   animation: bubble-in var(--dur) var(--ease);
 }
 
+.chat-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  padding: 8px 2px;
+}
+
+.chat-error {
+  align-self: flex-start;
+  max-width: 94%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(255, 59, 48, 0.1);
+  color: #d70015;
+  font-size: 12px;
+  line-height: 1.5;
+  user-select: text;
+}
+
+.chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 14px 6px;
+}
+
+.chat-chip {
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 3px 8px;
+  border-radius: 8px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chat-input-row {
-  padding: 8px 12px 12px;
+  padding: 8px 10px 12px 8px;
   flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .chat-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   height: 36px;
   padding: 0 14px;
   border-radius: var(--radius-control);

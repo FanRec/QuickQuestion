@@ -4,13 +4,23 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use crate::error::AppError;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// 页面流式事件：由注入脚本经 CDP binding 推送，再经 mpsc 转给命令层。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum StreamEvent {
+    Delta { text: String },
+    Done { text: String },
+    Error { message: String },
+}
 
 /// 输入框探测 JS：多候选 + 可见性判定，页面结构变化时仍有机会命中。
 const FIND_INPUT_JS: &str = r#"
@@ -33,11 +43,103 @@ const FIND_INPUT_JS: &str = r#"
 })()
 "#;
 
+/// 写入输入框兼容 textarea 与 contenteditable；msg 由调用方用 serde_json 转义后拼入。
+fn write_input_js(msg_json: &str) -> String {
+    format!(
+        r#"
+(function () {{
+  function visible(el) {{
+    var r = el.getBoundingClientRect();
+    if (r.width < 8 || r.height < 8) return false;
+    var cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0';
+  }}
+  var groups = ['textarea', '[contenteditable="true"]', '[role="textbox"]'];
+  var el = null;
+  for (var g = 0; g < groups.length && !el; g++) {{
+    var list = document.querySelectorAll(groups[g]);
+    for (var i = 0; i < list.length; i++) {{
+      if (!list[i].disabled && visible(list[i])) {{ el = list[i]; break; }}
+    }}
+  }}
+  if (!el) return 'NO_INPUT';
+  var msg = {msg_json};
+  el.focus();
+  if (typeof el.value === 'string' && !el.isContentEditable) {{
+    var desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
+    if (desc && desc.set) desc.set.call(el, msg); else el.value = msg;
+    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+  }} else {{
+    try {{
+      var sel = window.getSelection(); var range = document.createRange();
+      range.selectNodeContents(el); sel.removeAllRanges(); sel.addRange(range);
+      document.execCommand('insertText', false, msg);
+    }} catch (e) {{}}
+    if (!(el.innerText || '').trim()) el.textContent = msg;
+  }}
+  return 'OK';
+}})()
+"#,
+        msg_json = msg_json
+    )
+}
+
+/// 安装 mutation observer + 完成状态机；通过 window.__qq_emit 推送事件。
+const INSTALL_OBSERVER_JS: &str = r#"
+(function () {
+  var SEL = '.ds-assistant-message-main-content, [class*="ds-assistant-message-main-content"]';
+  function emit(o) { try { window.__qq_emit(JSON.stringify(o)); } catch (e) {} }
+
+  if (window.__qqObserver) { window.__qqObserver.disconnect(); }
+  if (window.__qqQuietTimer) { clearTimeout(window.__qqQuietTimer); }
+
+  var baseline = document.querySelectorAll(SEL).length;
+  var lastText = '';
+  var started = false;
+  var finished = false;
+
+  function textOf(el) {
+    if (!el) return '';
+    return (el.innerText || el.textContent || '').trim();
+  }
+  function lastAssistant() {
+    var list = document.querySelectorAll(SEL);
+    return list.length > baseline ? list[list.length - 1] : null;
+  }
+  function check() {
+    if (finished) return;
+    var el = lastAssistant();
+    if (!el) return;
+    var text = textOf(el);
+    if (!text) return;
+    if (!started) { started = true; }
+    if (text !== lastText) {
+      lastText = text;
+      emit({ type: 'delta', text: text });
+      if (window.__qqQuietTimer) clearTimeout(window.__qqQuietTimer);
+      window.__qqQuietTimer = setTimeout(function () {
+        if (!finished) {
+          finished = true;
+          emit({ type: 'done', text: lastText });
+          if (window.__qqObserver) window.__qqObserver.disconnect();
+        }
+      }, 900);
+    }
+  }
+  window.__qqObserver = new MutationObserver(check);
+  window.__qqObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+  return 'OK';
+})()
+"#;
+
 /// CDP WebSocket 客户端。请求通过自增 id 与 oneshot 关联，接收循环按 id 分发。
 pub struct CdpClient {
     port: u16,
     next_id: AtomicI64,
     pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Value>>>>,
+    /// 当前流式订阅者；每次 send_message 安装新的，支持多次问答。
+    subscriber: Arc<Mutex<Option<mpsc::UnboundedSender<StreamEvent>>>>,
     sender: Mutex<futures_util::stream::SplitSink<
         tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
         Message,
@@ -55,9 +157,13 @@ impl CdpClient {
 
         let pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Value>>>> =
             Arc::new(Mutex::new(HashMap::new()));
+        let subscriber: Arc<Mutex<Option<mpsc::UnboundedSender<StreamEvent>>>> =
+            Arc::new(Mutex::new(None));
 
-        // 接收循环：按 id 唤醒挂起请求；连接关闭时清空挂起表，避免永久悬挂。
+        // 接收循环：按 id 唤醒挂起请求；bindingCalled 事件转给当前订阅者；
+        // 连接关闭时清空挂起表，避免永久悬挂。
         let pending_clone = pending.clone();
+        let subscriber_clone = subscriber.clone();
         tokio::spawn(async move {
             while let Some(msg) = receiver.next().await {
                 match msg {
@@ -67,6 +173,24 @@ impl CdpClient {
                                 let mut map = pending_clone.lock().await;
                                 if let Some(tx) = map.remove(&id) {
                                     let _ = tx.send(value);
+                                }
+                                continue;
+                            }
+                            // 页面经 Runtime.addBinding 推送的流式事件。
+                            if value.get("method").and_then(Value::as_str)
+                                == Some("Runtime.bindingCalled")
+                            {
+                                if let Some(payload) = value
+                                    .get("params")
+                                    .and_then(|p| p.get("payload"))
+                                    .and_then(Value::as_str)
+                                {
+                                    if let Ok(event) = serde_json::from_str::<StreamEvent>(payload) {
+                                        let sub = subscriber_clone.lock().await;
+                                        if let Some(tx) = sub.as_ref() {
+                                            let _ = tx.send(event);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -82,6 +206,7 @@ impl CdpClient {
             port,
             next_id: AtomicI64::new(0),
             pending,
+            subscriber,
             sender: Mutex::new(sender),
         };
 
@@ -151,6 +276,104 @@ impl CdpClient {
     pub async fn input_ready(&self) -> Result<bool, AppError> {
         let raw = self.evaluate(FIND_INPUT_JS).await?;
         Ok(raw.trim() == "true")
+    }
+
+    /// 为本轮问答安装新的订阅者，返回接收端。旧订阅者被替换（上一轮应已结束）。
+    pub async fn subscribe(&self) -> mpsc::UnboundedReceiver<StreamEvent> {
+        let (tx, rx) = mpsc::unbounded_channel::<StreamEvent>();
+        *self.subscriber.lock().await = Some(tx);
+        rx
+    }
+
+    /// 清除当前订阅者，防止页面残留事件泄漏到下一轮。
+    pub async fn unsubscribe(&self) {
+        *self.subscriber.lock().await = None;
+    }
+
+    /// 注册页面→Rust 的 binding 通道并启用 Runtime 域。
+    pub async fn install_binding(&self) -> Result<(), AppError> {
+        self.call("Runtime.enable", json!({})).await?;
+        self.call("DOM.enable", json!({})).await?;
+        self.call(
+            "Runtime.addBinding",
+            json!({ "name": "__qq_emit" }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// 通过 CDP 设置文件输入（图片上传）。
+    pub async fn upload_files(&self, files: &[String]) -> Result<(), AppError> {
+        if files.is_empty() {
+            return Ok(());
+        }
+        let object = self
+            .call(
+                "Runtime.evaluate",
+                json!({
+                    "expression": "document.querySelector('input[type=file]')",
+                    "returnByValue": false
+                }),
+            )
+            .await?;
+        let object_id = object
+            .get("result")
+            .and_then(|r| r.get("objectId"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::msg("未找到 DeepSeek 文件上传控件。"))?;
+        self.call(
+            "DOM.setFileInputFiles",
+            json!({ "files": files, "objectId": object_id }),
+        )
+        .await?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        Ok(())
+    }
+
+    /// 写入文字、安装监听器并发送。调用方负责从 take_stream_rx 消费事件。
+    pub async fn send_message(&self, text: &str, files: &[String]) -> Result<(), AppError> {
+        // 安全检查：未登录则明确报错，不静默等待。
+        let url = self.current_url().await.unwrap_or_default();
+        if url.contains("sign_in") || url.contains("login") {
+            return Err(AppError::msg(
+                "DeepSeek 尚未登录，请先在浏览器中完成登录。".to_string(),
+            ));
+        }
+        if !self.input_ready().await? {
+            return Err(AppError::msg(
+                "未找到 DeepSeek 输入框，页面结构可能已变化。".to_string(),
+            ));
+        }
+
+        self.install_binding().await?;
+        self.upload_files(files).await?;
+
+        // 用 serde_json 转义后拼入 JS，避免注入。
+        let msg_json = serde_json::to_string(text)
+            .map_err(|e| AppError::msg(format!("消息编码失败：{e}")))?;
+        let result = self.evaluate(&write_input_js(&msg_json)).await?;
+        if result.trim() != "OK" {
+            return Err(AppError::msg("无法写入 DeepSeek 输入框。".to_string()));
+        }
+
+        self.evaluate(INSTALL_OBSERVER_JS).await?;
+
+        // 派发 Enter 发送。
+        self.evaluate(
+            r#"(function(){
+              var el = document.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
+              if (!el) return 'NO_INPUT';
+              el.focus();
+              ['keydown','keypress','keyup'].forEach(function(type){
+                el.dispatchEvent(new KeyboardEvent(type, {
+                  key:'Enter', code:'Enter', keyCode:13, which:13,
+                  bubbles:true, cancelable:true, isComposing:false }));
+              });
+              return 'OK';
+            })()"#,
+        )
+        .await?;
+        Ok(())
     }
 }
 

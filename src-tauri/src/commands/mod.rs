@@ -1,9 +1,12 @@
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
+use uuid::Uuid;
 
+use crate::cdp::StreamEvent;
 use crate::error::AppError;
-use crate::model::BrowserStatus;
+use crate::model::{BrowserStatus, Exchange};
 use crate::AppState;
 
 /// 健康检查命令；M0 用于验证 IPC 链路。
@@ -24,4 +27,88 @@ pub async fn browser_status(state: State<'_, Arc<AppState>>) -> Result<BrowserSt
         page_url,
         input_ready,
     })
+}
+
+/// 发送消息。立即返回 exchangeId；后续增量经 `qq://stream` 事件推送。
+#[tauri::command]
+pub async fn send_message(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    text: String,
+    files: Vec<String>,
+) -> Result<String, AppError> {
+    let cdp = state.ensure_cdp().await?;
+    // 必须先订阅再发送，避免事件在订阅之前到达而丢失。
+    let mut rx = cdp.subscribe().await;
+
+    let id = Uuid::new_v4().to_string();
+    let exchange_id = id.clone();
+    let app_for_task = app.clone();
+
+    cdp.send_message(&text, &files).await?;
+
+    // 消费流式事件并转发给前端。
+    let state_for_task = state.inner().clone();
+    let cdp_for_task = cdp.clone();
+    let question_text = text.clone();
+    let image_names = files
+        .iter()
+        .map(|p| std::path::Path::new(p))
+        .filter_map(|p| p.file_name())
+        .map(|n| n.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::Delta { text } => {
+                    let _ = app_for_task.emit(
+                        "qq://stream",
+                        serde_json::json!({
+                            "type": "delta",
+                            "exchangeId": exchange_id,
+                            "text": text,
+                        }),
+                    );
+                }
+                StreamEvent::Done { text } => {
+                    let answer = text;
+                    let created_at = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    state_for_task.store.add(Exchange {
+                        id: exchange_id.clone(),
+                        created_at,
+                        question_text: question_text.clone(),
+                        answer_text: answer.clone(),
+                        image_names: image_names.clone(),
+                    });
+                    let _ = app_for_task.emit(
+                        "qq://stream",
+                        serde_json::json!({
+                            "type": "done",
+                            "exchangeId": exchange_id,
+                            "text": answer,
+                        }),
+                    );
+                    cdp_for_task.unsubscribe().await;
+                    break;
+                }
+                StreamEvent::Error { message } => {
+                    let _ = app_for_task.emit(
+                        "qq://stream",
+                        serde_json::json!({
+                            "type": "error",
+                            "exchangeId": exchange_id,
+                            "message": message,
+                        }),
+                    );
+                    cdp_for_task.unsubscribe().await;
+                    break;
+                }
+            }
+        }
+    });
+
+    Ok(id)
 }

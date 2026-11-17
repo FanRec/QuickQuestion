@@ -3,6 +3,7 @@ pub mod cdp;
 mod commands;
 mod error;
 pub mod model;
+mod store;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -10,11 +11,13 @@ use tokio::sync::Mutex;
 use browser::{BrowserManager, DEFAULT_PORT};
 use cdp::CdpClient;
 use error::AppError;
+use store::MemoryStore;
 
-/// 应用共享状态：浏览器进程管理与复用的 CDP 连接。
+/// 应用共享状态：浏览器进程管理、复用的 CDP 连接、问答仓储。
 pub struct AppState {
     pub browser: BrowserManager,
     pub cdp: Mutex<Option<Arc<CdpClient>>>,
+    pub store: MemoryStore,
 }
 
 impl AppState {
@@ -22,6 +25,7 @@ impl AppState {
         Self {
             browser: BrowserManager::new(DEFAULT_PORT),
             cdp: Mutex::new(None),
+            store: MemoryStore::new(),
         }
     }
 
@@ -39,8 +43,13 @@ impl AppState {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(AppState::new()))
-        .invoke_handler(tauri::generate_handler![commands::ping, commands::browser_status])
+        .invoke_handler(tauri::generate_handler![
+            commands::ping,
+            commands::browser_status,
+            commands::send_message,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
