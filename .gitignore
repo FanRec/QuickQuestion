@@ -6,4 +6,5 @@ src-tauri/gen/schemas/
 *.local
 .DS_Store
 dev.log
+test.log
 .workbuddy/
