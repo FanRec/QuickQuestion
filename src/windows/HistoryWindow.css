@@ -30,6 +30,13 @@
   padding: 6px;
 }
 
+.history-empty {
+  padding: 32px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
 .history-item {
   display: flex;
   align-items: center;

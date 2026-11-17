@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { GlassCard } from "../components/GlassCard";
 import { IconButton } from "../components/IconButton";
-import { onStream } from "../lib/events";
+import { emitRefresh, onStream } from "../lib/events";
 import { hideWindow } from "../lib/windows";
 import "./ChatWindow.css";
 
@@ -24,6 +24,7 @@ export function ChatWindow() {
       } else if (payload.type === "done") {
         setAnswer(payload.text);
         setStreaming(false);
+        void emitRefresh();
       } else {
         setError(payload.message);
         setStreaming(false);

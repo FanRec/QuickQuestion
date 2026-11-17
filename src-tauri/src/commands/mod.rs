@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::cdp::StreamEvent;
 use crate::error::AppError;
 use crate::model::{BrowserStatus, Exchange};
+use crate::store::to_markdown;
 use crate::AppState;
 
 /// 健康检查命令；M0 用于验证 IPC 链路。
@@ -76,13 +77,22 @@ pub async fn send_message(
                         .duration_since(UNIX_EPOCH)
                         .map(|d| d.as_millis() as i64)
                         .unwrap_or(0);
-                    state_for_task.store.add(Exchange {
+                    if let Err(e) = state_for_task.store.add(&Exchange {
                         id: exchange_id.clone(),
                         created_at,
                         question_text: question_text.clone(),
                         answer_text: answer.clone(),
                         image_names: image_names.clone(),
-                    });
+                    }) {
+                        let _ = app_for_task.emit(
+                            "qq://stream",
+                            serde_json::json!({
+                                "type": "error",
+                                "exchangeId": exchange_id,
+                                "message": format!("保存历史失败：{}", e.message),
+                            }),
+                        );
+                    }
                     let _ = app_for_task.emit(
                         "qq://stream",
                         serde_json::json!({
@@ -111,4 +121,32 @@ pub async fn send_message(
     });
 
     Ok(id)
+}
+
+/// 列出全部问答（倒序），悬浮列表与主窗口左栏共用。
+#[tauri::command]
+pub fn list_exchanges(state: State<'_, Arc<AppState>>) -> Result<Vec<Exchange>, AppError> {
+    state.store.list()
+}
+
+/// 获取单条问答详情。
+#[tauri::command]
+pub fn get_exchange(state: State<'_, Arc<AppState>>, id: String) -> Result<Option<Exchange>, AppError> {
+    state.store.get(&id)
+}
+
+/// 删除一条问答。
+#[tauri::command]
+pub fn delete_exchange(state: State<'_, Arc<AppState>>, id: String) -> Result<(), AppError> {
+    state.store.delete(&id)
+}
+
+/// 生成复制文本：`## 问题\n回复`；剪贴板写入由前端完成。
+#[tauri::command]
+pub fn copy_markdown(state: State<'_, Arc<AppState>>, id: String) -> Result<String, AppError> {
+    let exchange = state
+        .store
+        .get(&id)?
+        .ok_or_else(|| AppError::msg("未找到该问答。"))?;
+    Ok(to_markdown(&exchange))
 }
