@@ -5,8 +5,11 @@ import { OrbWindow } from "./windows/OrbWindow";
 import { ChatWindow } from "./windows/ChatWindow";
 import { HistoryWindow } from "./windows/HistoryWindow";
 import { MainWindow } from "./windows/MainWindow";
+import { applyTheme, loadTheme, watchTheme } from "./lib/theme";
 
 const windowId = new URLSearchParams(window.location.search).get("window");
+applyTheme(loadTheme());
+watchTheme();
 
 function App() {
   switch (windowId) {

@@ -29,3 +29,16 @@ export function browserStatus(): Promise<{
 }> {
   return invoke("browser_status");
 }
+
+export interface Settings {
+  browserPort: number;
+  quietMs: number;
+}
+
+export function getSettings(): Promise<Settings> {
+  return invoke("get_settings");
+}
+
+export function updateSettings(settings: Settings): Promise<void> {
+  return invoke("update_settings", { settings });
+}

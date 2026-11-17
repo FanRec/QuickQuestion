@@ -44,7 +44,7 @@ async fn send_message_streams_delta_then_done() {
 
     let mut rx = client.subscribe().await;
     client
-        .send_message("请只回复两个字：收到", &[])
+        .send_message("请只回复两个字：收到", &[], 900)
         .await
         .expect("应能发送消息");
 

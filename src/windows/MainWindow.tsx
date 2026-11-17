@@ -4,11 +4,15 @@ import { getExchange, listExchanges } from "../lib/api";
 import { onSelect } from "../lib/events";
 import type { Exchange } from "../lib/types";
 import { formatTime } from "../lib/types";
+import { HelpPanel } from "./HelpPanel";
+import { SettingsPanel } from "./SettingsPanel";
 import "./MainWindow.css";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
+type Panel = "list" | "settings" | "help";
 
 export function MainWindow() {
+  const [panel, setPanel] = useState<Panel>("list");
   const [items, setItems] = useState<Exchange[]>([]);
   const [selected, setSelected] = useState<Exchange | null>(null);
 
@@ -36,7 +40,10 @@ export function MainWindow() {
     void loadList().then((list) => {
       if (list.length > 0) void select(list[0].id);
     });
-    onSelect((id) => void select(id)).then((fn) => {
+    onSelect((id) => {
+      setPanel("list");
+      void select(id);
+    }).then((fn) => {
       unlisten = fn;
     });
     return () => unlisten?.();
@@ -55,59 +62,67 @@ export function MainWindow() {
           <span>QuickQuestion</span>
         </div>
         <div className="menu-items">
-          <span className="menu-item">设置</span>
-          <span className="menu-item">帮助</span>
+          <button type="button" className={`menu-item ${panel === "settings" ? "is-active" : ""}`} onClick={() => setPanel("settings")}>设置</button>
+          <button type="button" className={`menu-item ${panel === "help" ? "is-active" : ""}`} onClick={() => setPanel("help")}>帮助</button>
         </div>
       </div>
 
       <div className="main-body">
-        <aside className="main-sidebar">
-          <div className="sidebar-title">全部问题</div>
-          <div className="sidebar-list">
-            {items.length === 0 && <div className="sidebar-empty">还没有问答记录</div>}
-            {items.map((item) => (
-              <button
-                type="button"
-                key={item.id}
-                className={`sidebar-item ${item.id === selected?.id ? "is-selected" : ""}`}
-                onClick={() => void select(item.id)}
-              >
-                <span className="sidebar-item-text">{item.questionText}</span>
-                <span className="sidebar-item-time">{formatTime(item.createdAt)}</span>
-              </button>
-            ))}
-          </div>
-        </aside>
+        {panel === "settings" ? (
+          <SettingsPanel />
+        ) : panel === "help" ? (
+          <HelpPanel />
+        ) : (
+          <>
+            <aside className="main-sidebar">
+              <div className="sidebar-title">全部问题</div>
+              <div className="sidebar-list">
+                {items.length === 0 && <div className="sidebar-empty">还没有问答记录</div>}
+                {items.map((item) => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    className={`sidebar-item ${item.id === selected?.id ? "is-selected" : ""}`}
+                    onClick={() => void select(item.id)}
+                  >
+                    <span className="sidebar-item-text">{item.questionText}</span>
+                    <span className="sidebar-item-time">{formatTime(item.createdAt)}</span>
+                  </button>
+                ))}
+              </div>
+            </aside>
 
-        <main className="main-detail">
-          {selected ? (
-            <>
-              <div className="detail-question">
-                <div className="detail-label">问题</div>
-                <div className="detail-question-text">{selected.questionText}</div>
-                {selected.imageNames.length > 0 && (
-                  <div className="detail-images">
-                    {selected.imageNames.map((name, i) => (
-                      <span className="detail-image-chip" key={`${name}-${i}`}>
-                        [图片{i + 1}] {name}
-                      </span>
-                    ))}
+            <main className="main-detail">
+              {selected ? (
+                <>
+                  <div className="detail-question">
+                    <div className="detail-label">问题</div>
+                    <div className="detail-question-text">{selected.questionText}</div>
+                    {selected.imageNames.length > 0 && (
+                      <div className="detail-images">
+                        {selected.imageNames.map((name, i) => (
+                          <span className="detail-image-chip" key={`${name}-${i}`}>
+                            [图片{i + 1}] {name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-              <div className="detail-divider" />
-              <div className="detail-answer">
-                <div className="detail-label">回答</div>
-                <div
-                  className="detail-answer-text markdown"
-                  dangerouslySetInnerHTML={{ __html: answerHtml }}
-                />
-              </div>
-            </>
-          ) : (
-            <div className="detail-empty">选择左侧问题查看详情</div>
-          )}
-        </main>
+                  <div className="detail-divider" />
+                  <div className="detail-answer">
+                    <div className="detail-label">回答</div>
+                    <div
+                      className="detail-answer-text markdown"
+                      dangerouslySetInnerHTML={{ __html: answerHtml }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="detail-empty">选择左侧问题查看详情</div>
+              )}
+            </main>
+          </>
+        )}
       </div>
     </div>
   );

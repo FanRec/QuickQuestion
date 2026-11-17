@@ -45,8 +45,9 @@ pub async fn send_message(
     let id = Uuid::new_v4().to_string();
     let exchange_id = id.clone();
     let app_for_task = app.clone();
+    let quiet_ms = state.config.load().quiet_ms;
 
-    cdp.send_message(&text, &files).await?;
+    cdp.send_message(&text, &files, quiet_ms).await?;
 
     // 消费流式事件并转发给前端。
     let state_for_task = state.inner().clone();
@@ -149,4 +150,19 @@ pub fn copy_markdown(state: State<'_, Arc<AppState>>, id: String) -> Result<Stri
         .get(&id)?
         .ok_or_else(|| AppError::msg("未找到该问答。"))?;
     Ok(to_markdown(&exchange))
+}
+
+/// 读取设置。
+#[tauri::command]
+pub fn get_settings(state: State<'_, Arc<AppState>>) -> crate::config::Settings {
+    state.config.load()
+}
+
+/// 更新设置（端口改动需重启应用生效）。
+#[tauri::command]
+pub fn update_settings(
+    state: State<'_, Arc<AppState>>,
+    settings: crate::config::Settings,
+) -> Result<(), AppError> {
+    state.config.save(&settings)
 }

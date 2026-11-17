@@ -85,8 +85,9 @@ fn write_input_js(msg_json: &str) -> String {
     )
 }
 
-/// 安装 mutation observer + 完成状态机；通过 window.__qq_emit 推送事件。
-const INSTALL_OBSERVER_JS: &str = r#"
+/// 安装 mutation observer + 完成状态机；quiet_ms 为完成判定的静默窗口。
+fn install_observer_js(quiet_ms: u64) -> String {
+    r#"
 (function () {
   var SEL = '.ds-assistant-message-main-content, [class*="ds-assistant-message-main-content"]';
   function emit(o) { try { window.__qq_emit(JSON.stringify(o)); } catch (e) {} }
@@ -124,14 +125,15 @@ const INSTALL_OBSERVER_JS: &str = r#"
           emit({ type: 'done', text: lastText });
           if (window.__qqObserver) window.__qqObserver.disconnect();
         }
-      }, 900);
+      }, __QUIET_MS__);
     }
   }
   window.__qqObserver = new MutationObserver(check);
   window.__qqObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
   return 'OK';
 })()
-"#;
+"#.replace("__QUIET_MS__", &quiet_ms.to_string())
+}
 
 /// CDP WebSocket 客户端。请求通过自增 id 与 oneshot 关联，接收循环按 id 分发。
 pub struct CdpClient {
@@ -331,7 +333,7 @@ impl CdpClient {
     }
 
     /// 写入文字、安装监听器并发送。调用方负责从 take_stream_rx 消费事件。
-    pub async fn send_message(&self, text: &str, files: &[String]) -> Result<(), AppError> {
+    pub async fn send_message(&self, text: &str, files: &[String], quiet_ms: u64) -> Result<(), AppError> {
         // 安全检查：未登录则明确报错，不静默等待。
         let url = self.current_url().await.unwrap_or_default();
         if url.contains("sign_in") || url.contains("login") {
@@ -356,7 +358,7 @@ impl CdpClient {
             return Err(AppError::msg("无法写入 DeepSeek 输入框。".to_string()));
         }
 
-        self.evaluate(INSTALL_OBSERVER_JS).await?;
+        self.evaluate(&install_observer_js(quiet_ms)).await?;
 
         // 派发 Enter 发送。
         self.evaluate(

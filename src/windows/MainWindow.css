@@ -51,6 +51,11 @@
   color: var(--text-primary);
 }
 
+.menu-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .main-body {
   flex: 1;
   min-height: 0;
