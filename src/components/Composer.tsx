@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeHtml } from "@tauri-apps/plugin-clipboard-manager";
@@ -20,6 +20,7 @@ import {
   onStream,
 } from "../lib/events";
 import { showWindow } from "../lib/windows";
+import mascotFace from "../assets/mascot-face.png";
 import "./Composer.css";
 
 /** 内容高度变化时上报，宿主窗口据此调整自身尺寸。 */
@@ -29,13 +30,15 @@ export type ComposerProps = {
   onContentHeight: (height: number) => void;
   /** 窗口版收起用；inline 版由球控制形态，不传。 */
   onClose?: () => void;
+  /** 回复状态上报：inline 版宿主据此决定收起是否要让位；不传则不上报。 */
+  onBusyChange?: (busy: boolean) => void;
 };
 
 /**
  * 输入条 + 回复气泡。悬浮球内嵌一份、Alt+Q 独立窗口再跑一份，
  * 两份实例状态互不相干，但外观与行为完全一致。
  */
-export function Composer({ variant, onContentHeight, onClose }: ComposerProps) {
+export function Composer({ variant, onContentHeight, onClose, onBusyChange }: ComposerProps) {
   const [text, setText] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +68,8 @@ export function Composer({ variant, onContentHeight, onClose }: ComposerProps) {
 
   const bubbleShown = streaming || answer !== null || error !== null;
   const needLogin = !!error && error.includes("登录");
+  // 发出请求但还没收到任何流式文本：显示骨架屏，比空白气泡友好。
+  const pending = streaming && !answer;
 
   const refreshActive = () => {
     void activeSession()
@@ -110,15 +115,32 @@ export function Composer({ variant, onContentHeight, onClose }: ComposerProps) {
   }, [variant]);
 
   // 内容高度用实测而非公式：公式一旦和真实渲染差几像素，窗口就会裁掉内容。
+  // Alt+Q 唤起时宿主会把窗口重置为占位高度，而 body 自身尺寸不变时
+  // ResizeObserver 不会触发，所以唤醒和内容变化时都要主动补报一次。
+  const reportHeight = useCallback(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    onContentHeight(Math.ceil(el.getBoundingClientRect().height));
+  }, [onContentHeight]);
+
+  // 回复状态上报给宿主：inline 版收起会卸载本组件、把流式气泡一起带走，
+  // 宿主需要知道何时该拒绝收起。
+  useEffect(() => {
+    onBusyChange?.(streaming);
+  }, [onBusyChange, streaming]);
+
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
-    const report = () => onContentHeight(Math.ceil(el.getBoundingClientRect().height));
-    report();
-    const ro = new ResizeObserver(report);
+    reportHeight();
+    const ro = new ResizeObserver(reportHeight);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [onContentHeight]);
+  }, [reportHeight]);
+
+  useEffect(() => {
+    reportHeight();
+  }, [reportHeight, wakeTick, bubbleShown, answer, error, streaming, images.length, activeTitle, newSession]);
 
   useEffect(() => {
     let unlistenStream: (() => void) | undefined;
@@ -203,7 +225,7 @@ export function Composer({ variant, onContentHeight, onClose }: ComposerProps) {
     setStreaming(true);
     setText("");
     if (inputRef.current) {
-      inputRef.current.style.height = "20px";
+      inputRef.current.style.height = "24px";
     }
     const sentImages = images;
     setImages([]);
@@ -274,7 +296,29 @@ export function Composer({ variant, onContentHeight, onClose }: ComposerProps) {
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
         >
-          <div className="composer-bubble-text">{error ?? answer}</div>
+          {pending ? (
+            <div className="composer-skeleton" aria-busy="true">
+              <div className="composer-skeleton-head">
+                <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+                  <path d="M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2z" fill="currentColor" />
+                </svg>
+                <span>正在回答…</span>
+                <span className="composer-dots">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+              </div>
+              <div className="composer-skeleton-lines">
+                <i style={{ width: "88%" }} />
+                <i style={{ width: "70%" }} />
+                <i style={{ width: "46%" }} />
+              </div>
+              <img className="composer-skeleton-mascot" src={mascotFace} alt="" draggable={false} />
+            </div>
+          ) : (
+            <div className="composer-bubble-text">{error ?? answer}</div>
+          )}
           <button
             type="button"
             className="composer-bubble-close"
@@ -305,17 +349,28 @@ export function Composer({ variant, onContentHeight, onClose }: ComposerProps) {
               去登录
             </button>
           )}
-        </div>
-      )}
-
-      {bubbleShown && !error && exchangeId && (
-        <div className="composer-bubble-actions">
-          <button type="button" className="composer-bubble-btn" onClick={() => void copyAnswer()}>
-            {copied ? "已复制" : "复制"}
-          </button>
-          <button type="button" className="composer-bubble-btn" onClick={openInMain}>
-            打开
-          </button>
+          {!error && exchangeId && (
+            <div className="composer-bubble-actions">
+              <div className="composer-bubble-btns">
+                <button type="button" className="composer-bubble-btn" onClick={() => void copyAnswer()}>
+                  <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
+                    <rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.8" fill="none" />
+                    <path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none" />
+                  </svg>
+                  {copied ? "已复制" : "复制"}
+                </button>
+                <button type="button" className="composer-bubble-btn" onClick={openInMain}>
+                  <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
+                    <path d="M14 5h5v5M19 5l-8 8M10 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                  </svg>
+                  打开
+                </button>
+              </div>
+              {!!answer && answer.length <= 140 && (
+                <img className="composer-bubble-mascot" src={mascotFace} alt="" draggable={false} />
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -339,8 +394,22 @@ export function Composer({ variant, onContentHeight, onClose }: ComposerProps) {
         </div>
       )}
 
-      {activeTitle && !newSession && <div className="composer-context">接续：{activeTitle}</div>}
-      {newSession && <div className="composer-context composer-context--new">本次将开启新会话</div>}
+      {activeTitle && !newSession && (
+        <div className="composer-context">
+          <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
+            <path d="M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2z" fill="currentColor" />
+          </svg>
+          接续：{activeTitle}
+        </div>
+      )}
+      {newSession && (
+        <div className="composer-context composer-context--new">
+          <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
+            <path d="M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2z" fill="currentColor" />
+          </svg>
+          本次将开启新会话
+        </div>
+      )}
 
       <div
         className="composer-input-wrap"
