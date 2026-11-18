@@ -21,6 +21,7 @@ export function SettingsPanel() {
     quietMs: 900,
     systemPrompt: "",
     hotkey: "Alt+Q",
+    lastSessionId: "",
     bubbleHideSecs: 5,
     popupHideSecs: 0,
   });

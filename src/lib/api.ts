@@ -95,6 +95,8 @@ export interface Settings {
   quietMs: number;
   systemPrompt: string;
   hotkey: string;
+  /** 上次选中的会话；只透传不修改，否则保存设置会把后端记住的值冲掉。 */
+  lastSessionId: string;
   /** 回复气泡自动消失秒数；0 = 永不。 */
   bubbleHideSecs: number;
   /** 独立输入条整体自动收起秒数；0 = 永不。 */

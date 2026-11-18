@@ -17,7 +17,7 @@ pub struct BrowserManager {
 impl BrowserManager {
     pub fn new(port: u16) -> Self {
         let profile_dir = dirs::data_local_dir()
-            .unwrap_or_else(|| std::env::temp_dir())
+            .unwrap_or_else(std::env::temp_dir)
             .join("QuickQuestion")
             .join("browser-profile");
         Self {

@@ -59,7 +59,6 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
   const [wakeTick, setWakeTick] = useState(0);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const bubbleRef = useRef<HTMLDivElement>(null);
   // 内容根节点：用它实测高度上报给宿主窗口。
   const bodyRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<number | undefined>(undefined);
@@ -291,7 +290,6 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     <div className="composer-body" ref={bodyRef}>
       {bubbleShown && (
         <div
-          ref={bubbleRef}
           className={`composer-bubble${error ? " composer-bubble--error" : ""}`}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}

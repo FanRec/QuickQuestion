@@ -50,7 +50,7 @@ pub struct ConfigService {
 impl ConfigService {
     pub fn new() -> Self {
         let dir = dirs::data_dir()
-            .unwrap_or_else(|| std::env::temp_dir())
+            .unwrap_or_else(std::env::temp_dir)
             .join("QuickQuestion");
         Self {
             path: dir.join("settings.json"),
@@ -86,6 +86,9 @@ fn normalize(mut s: Settings) -> Settings {
     if !(200..=5000).contains(&s.quiet_ms) {
         s.quiet_ms = 900;
     }
+    // 与设置页输入框的 min/max 保持一致；负数（JSON 层面不可能，防御手输 0 以下）归 0。
+    s.bubble_hide_secs = s.bubble_hide_secs.min(600);
+    s.popup_hide_secs = s.popup_hide_secs.min(600);
     if s.hotkey.trim().is_empty() {
         s.hotkey = "Alt+Q".to_string();
     }

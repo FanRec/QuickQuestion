@@ -21,7 +21,7 @@ fn now_ms() -> i64 {
 impl SqliteStore {
     pub fn init() -> Result<Self, AppError> {
         let dir = dirs::data_dir()
-            .unwrap_or_else(|| std::env::temp_dir())
+            .unwrap_or_else(std::env::temp_dir)
             .join("QuickQuestion");
         std::fs::create_dir_all(&dir)
             .map_err(|e| AppError::msg(format!("无法创建数据目录：{e}")))?;
@@ -190,13 +190,18 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// 删除会话及其全部问答。
+    /// 删除会话及其全部问答。两步同事务：中途失败不会留下"会话没了、问答还在"的孤儿。
     pub fn delete_session(&self, id: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM exchanges WHERE session_id = ?1", params![id])
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::msg(format!("开启事务失败：{e}")))?;
+        tx.execute("DELETE FROM exchanges WHERE session_id = ?1", params![id])
             .map_err(|e| AppError::msg(format!("删除会话内问答失败：{e}")))?;
-        conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])
+        tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])
             .map_err(|e| AppError::msg(format!("删除会话失败：{e}")))?;
+        tx.commit()
+            .map_err(|e| AppError::msg(format!("提交删除失败：{e}")))?;
         Ok(())
     }
 
@@ -237,7 +242,7 @@ impl SqliteStore {
             )
             .map_err(|e| AppError::msg(format!("查询失败：{e}")))?;
         let rows = stmt
-            .query_map([], |row| row_to_exchange(row))
+            .query_map([], row_to_exchange)
             .map_err(|e| AppError::msg(format!("读取失败：{e}")))?;
         collect(rows)
     }
@@ -252,7 +257,7 @@ impl SqliteStore {
             )
             .map_err(|e| AppError::msg(format!("查询会话问答失败：{e}")))?;
         let rows = stmt
-            .query_map(params![session_id], |row| row_to_exchange(row))
+            .query_map(params![session_id], row_to_exchange)
             .map_err(|e| AppError::msg(format!("读取会话问答失败：{e}")))?;
         collect(rows)
     }
@@ -266,7 +271,7 @@ impl SqliteStore {
             )
             .map_err(|e| AppError::msg(format!("查询失败：{e}")))?;
         let mut rows = stmt
-            .query_map(params![id], |row| row_to_exchange(row))
+            .query_map(params![id], row_to_exchange)
             .map_err(|e| AppError::msg(format!("读取失败：{e}")))?;
         match rows.next() {
             Some(row) => row

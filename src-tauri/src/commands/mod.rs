@@ -44,6 +44,8 @@ pub struct SendResult {
 /// - newSession=true：网页开全新会话，本地也新建会话
 /// - newSession=false 且 sessionId 有绑定：网页切到该会话，接续上下文
 /// - newSession=false 且无绑定/无 sessionId：新建会话 + 网页首页
+// 参数即 IPC 契约（与前端 sendMessage 的字段一一对应），收拢成结构体要两端同改，不值。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn send_message(
     app: AppHandle,
@@ -154,7 +156,7 @@ async fn send_inner(
     let session_for_task = chosen.id.clone();
     let image_names = files
         .iter()
-        .map(|p| std::path::Path::new(p))
+        .map(std::path::Path::new)
         .filter_map(|p| p.file_name())
         .map(|n| n.to_string_lossy().to_string())
         .collect::<Vec<_>>();
