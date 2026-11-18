@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,6 +40,18 @@ const FIND_INPUT_JS: &str = r#"
     }
   }
   return false;
+})()
+"#;
+
+/// 读取最后一条助手回复：条数 + 纯文本。每次调用全新查询，不受 SPA 导航影响。
+const LAST_REPLY_JS: &str = r#"
+(function () {
+  var sel = '.ds-assistant-message-main-content, [class*="ds-assistant-message-main-content"]';
+  var list = document.querySelectorAll(sel);
+  if (!list.length) return JSON.stringify({ count: 0, text: '' });
+  var last = list[list.length - 1];
+  var text = (last.innerText || last.textContent || '').trim();
+  return JSON.stringify({ count: list.length, text: text });
 })()
 "#;
 
@@ -85,63 +97,17 @@ fn write_input_js(msg_json: &str) -> String {
     )
 }
 
-/// 安装 mutation observer + 完成状态机；quiet_ms 为完成判定的静默窗口。
-fn install_observer_js(quiet_ms: u64) -> String {
-    r#"
-(function () {
-  var SEL = '.ds-assistant-message-main-content, [class*="ds-assistant-message-main-content"]';
-  function emit(o) { try { window.__qq_emit(JSON.stringify(o)); } catch (e) {} }
-
-  if (window.__qqObserver) { window.__qqObserver.disconnect(); }
-  if (window.__qqQuietTimer) { clearTimeout(window.__qqQuietTimer); }
-
-  var baseline = document.querySelectorAll(SEL).length;
-  var lastText = '';
-  var started = false;
-  var finished = false;
-
-  function textOf(el) {
-    if (!el) return '';
-    return (el.innerText || el.textContent || '').trim();
-  }
-  function lastAssistant() {
-    var list = document.querySelectorAll(SEL);
-    return list.length > baseline ? list[list.length - 1] : null;
-  }
-  function check() {
-    if (finished) return;
-    var el = lastAssistant();
-    if (!el) return;
-    var text = textOf(el);
-    if (!text) return;
-    if (!started) { started = true; }
-    if (text !== lastText) {
-      lastText = text;
-      emit({ type: 'delta', text: text });
-      if (window.__qqQuietTimer) clearTimeout(window.__qqQuietTimer);
-      window.__qqQuietTimer = setTimeout(function () {
-        if (!finished) {
-          finished = true;
-          emit({ type: 'done', text: lastText });
-          if (window.__qqObserver) window.__qqObserver.disconnect();
-        }
-      }, __QUIET_MS__);
-    }
-  }
-  window.__qqObserver = new MutationObserver(check);
-  window.__qqObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
-  return 'OK';
-})()
-"#.replace("__QUIET_MS__", &quiet_ms.to_string())
-}
-
 /// CDP WebSocket 客户端。请求通过自增 id 与 oneshot 关联，接收循环按 id 分发。
 pub struct CdpClient {
     port: u16,
     next_id: AtomicI64,
     pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Value>>>>,
-    /// 当前流式订阅者；每次 send_message 安装新的，支持多次问答。
+    /// 当前流式订阅者；每次 send_message 前由 subscribe 安装，支持多次问答。
     subscriber: Arc<Mutex<Option<mpsc::UnboundedSender<StreamEvent>>>>,
+    /// 连接存活标志；接收循环退出时置 false，供 ensure_cdp 判断重连。
+    alive: Arc<AtomicBool>,
+    /// 取消标志；cancel_current 置 true，轮询任务据此停止。
+    cancelled: Arc<AtomicBool>,
     sender: Mutex<futures_util::stream::SplitSink<
         tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
         Message,
@@ -166,6 +132,8 @@ impl CdpClient {
         // 连接关闭时清空挂起表，避免永久悬挂。
         let pending_clone = pending.clone();
         let subscriber_clone = subscriber.clone();
+        let alive = Arc::new(AtomicBool::new(true));
+        let alive_clone = alive.clone();
         tokio::spawn(async move {
             while let Some(msg) = receiver.next().await {
                 match msg {
@@ -202,6 +170,7 @@ impl CdpClient {
                 }
             }
             pending_clone.lock().await.clear();
+            alive_clone.store(false, Ordering::SeqCst);
         });
 
         let client = Self {
@@ -209,6 +178,8 @@ impl CdpClient {
             next_id: AtomicI64::new(0),
             pending,
             subscriber,
+            alive,
+            cancelled: Arc::new(AtomicBool::new(false)),
             sender: Mutex::new(sender),
         };
 
@@ -219,6 +190,14 @@ impl CdpClient {
                 .call("Page.navigate", json!({ "url": "https://chat.deepseek.com" }))
                 .await?;
             tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        // 等待页面布局完成、输入框可见，避免连接后立刻发消息命中未加载的页面。
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while std::time::Instant::now() < deadline {
+            if client.input_ready().await.unwrap_or(false) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
         Ok(client)
     }
@@ -292,16 +271,31 @@ impl CdpClient {
         *self.subscriber.lock().await = None;
     }
 
-    /// 注册页面→Rust 的 binding 通道并启用 Runtime 域。
-    pub async fn install_binding(&self) -> Result<(), AppError> {
-        self.call("Runtime.enable", json!({})).await?;
-        self.call("DOM.enable", json!({})).await?;
-        self.call(
-            "Runtime.addBinding",
-            json!({ "name": "__qq_emit" }),
-        )
-        .await?;
-        Ok(())
+    /// 连接是否存活。
+    pub fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::SeqCst)
+    }
+
+    /// 取消当前接收：清订阅者并断开页面 observer。
+    /// 注意：网页端的生成无法被强制停止，这里只停止本机接收。
+    pub fn cancel_current(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    /// 开始新一轮前重置取消标志。
+    pub fn reset_cancel(&self) {
+        self.cancelled.store(false, Ordering::SeqCst);
+    }
+
+    /// 发送前检测验证码/人机验证页面。
+    pub async fn captcha_present(&self) -> bool {
+        let js = r#"(function(){
+          var t = document.body.innerText || '';
+          if (/人机验证|滑动验证|安全验证|请完成验证/.test(t)) return true;
+          if (document.querySelector('iframe[src*="captcha"], [class*="captcha"]')) return true;
+          return false;
+        })()"#;
+        self.evaluate(js).await.unwrap_or_default().trim() == "true"
     }
 
     /// 通过 CDP 设置文件输入（图片上传）。
@@ -332,35 +326,45 @@ impl CdpClient {
         Ok(())
     }
 
-    /// 写入文字、安装监听器并发送。调用方负责从 take_stream_rx 消费事件。
-    pub async fn send_message(&self, text: &str, files: &[String], quiet_ms: u64) -> Result<(), AppError> {
-        // 安全检查：未登录则明确报错，不静默等待。
+    /// 读取当前最后一条回复的 Markdown 文本（每次全新查询，不受页面导航影响）。
+    pub async fn read_reply(&self) -> Result<(usize, String), AppError> {
+        let raw = self.evaluate(LAST_REPLY_JS).await?;
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
+        let count = value.get("count").and_then(Value::as_u64).unwrap_or(0) as usize;
+        let text = value.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+        Ok((count, text))
+    }
+
+    /// 写入文字并发送，返回发送前的回复快照 (条数, 文本)。
+    /// 快照交给 spawn_reply_poller 判断"哪条是新回复"，避免误认上一轮内容。
+    pub async fn send_message(
+        self: &Arc<Self>,
+        text: &str,
+        files: &[String],
+    ) -> Result<(usize, String), AppError> {
         let url = self.current_url().await.unwrap_or_default();
         if url.contains("sign_in") || url.contains("login") {
-            return Err(AppError::msg(
-                "DeepSeek 尚未登录，请先在浏览器中完成登录。".to_string(),
-            ));
+            return Err(AppError::msg("DeepSeek 尚未登录，请先在浏览器中完成登录。"));
         }
         if !self.input_ready().await? {
-            return Err(AppError::msg(
-                "未找到 DeepSeek 输入框，页面结构可能已变化。".to_string(),
-            ));
+            return Err(AppError::msg("未找到 DeepSeek 输入框，页面结构可能已变化。"));
+        }
+        if self.captcha_present().await {
+            return Err(AppError::msg("检测到人机验证，请在浏览器中手动完成后重试。"));
         }
 
-        self.install_binding().await?;
         self.upload_files(files).await?;
 
-        // 用 serde_json 转义后拼入 JS，避免注入。
         let msg_json = serde_json::to_string(text)
             .map_err(|e| AppError::msg(format!("消息编码失败：{e}")))?;
         let result = self.evaluate(&write_input_js(&msg_json)).await?;
         if result.trim() != "OK" {
-            return Err(AppError::msg("无法写入 DeepSeek 输入框。".to_string()));
+            return Err(AppError::msg("无法写入 DeepSeek 输入框。"));
         }
 
-        self.evaluate(&install_observer_js(quiet_ms)).await?;
+        // 发送前快照：新回复必须与之不同（条数变化或文本变化）才算数。
+        let before = self.read_reply().await.unwrap_or((0, String::new()));
 
-        // 派发 Enter 发送。
         self.evaluate(
             r#"(function(){
               var el = document.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
@@ -375,7 +379,77 @@ impl CdpClient {
             })()"#,
         )
         .await?;
-        Ok(())
+        Ok(before)
+    }
+
+    /// 结束本轮：取出并清空订阅者，投递最终事件。
+    /// 一次 take 完成"发送 + 摘除"，消费端随后 unsubscribe 不会残留悬挂。
+    async fn finish(&self, event: StreamEvent) {
+        if let Some(tx) = self.subscriber.lock().await.take() {
+            let _ = tx.send(event);
+        }
+    }
+
+    /// Rust 侧轮询回复并推送事件：每次全新 JS 查询，页面导航不影响。
+    /// before 为发送前快照，用于识别"本轮新回复"，避免把上一轮内容当结果。
+    pub fn spawn_reply_poller(self: Arc<Self>, before: (usize, String), quiet_ms: u64) {
+        tokio::spawn(async move {
+            let deadline = std::time::Instant::now() + Duration::from_secs(180);
+            let mut last = before.1.clone();
+            let mut saw_new = false;
+            let mut stable_ms: u64 = 0;
+            let tick = Duration::from_millis(250);
+            // 发送触发 SPA 导航到会话页，先给页面一点时间稳定再读取。
+            tokio::time::sleep(Duration::from_millis(600)).await;
+
+            while std::time::Instant::now() < deadline {
+                if !self.alive.load(Ordering::SeqCst) {
+                    self.finish(StreamEvent::Error {
+                        message: "浏览器连接已断开，请重试。".to_string(),
+                    })
+                    .await;
+                    return;
+                }
+                if self.cancelled.load(Ordering::SeqCst) {
+                    self.finish(StreamEvent::Error {
+                        message: "已取消".to_string(),
+                    })
+                    .await;
+                    return;
+                }
+                tokio::time::sleep(tick).await;
+                let (count, text) = match self.read_reply().await {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if text.is_empty() {
+                    continue;
+                }
+                // 条数相对快照变化（新增或新会话重置），或文本被改写，都算本轮新回复。
+                if count != before.0 || text != before.1 {
+                    saw_new = true;
+                }
+                if saw_new && text != last {
+                    // 增量到达：推送完整文本，前端做替换（简单可靠）。
+                    if let Some(tx) = self.subscriber.lock().await.as_ref() {
+                        let _ = tx.send(StreamEvent::Delta { text: text.clone() });
+                    }
+                    stable_ms = 0;
+                } else if saw_new {
+                    stable_ms += tick.as_millis() as u64;
+                }
+                last = text.clone();
+
+                if saw_new && stable_ms >= quiet_ms {
+                    self.finish(StreamEvent::Done { text }).await;
+                    return;
+                }
+            }
+            self.finish(StreamEvent::Error {
+                message: "等待 DeepSeek 回复超时。".to_string(),
+            })
+            .await;
+        });
     }
 }
 
@@ -391,15 +465,28 @@ async fn find_page_socket(port: u16) -> Result<String, AppError> {
     for attempt in 0..30 {
         if let Ok(resp) = client.get(&url).send().await {
             if let Ok(list) = resp.json::<Vec<Value>>().await {
-                for item in &list {
-                    if item.get("type").and_then(Value::as_str) != Some("page") {
-                        continue;
-                    }
-                    let page_url = item.get("url").and_then(Value::as_str).unwrap_or("");
-                    if page_url.contains("chat.deepseek.com") {
-                        if let Some(ws) = item.get("webSocketDebuggerUrl").and_then(Value::as_str) {
-                            return Ok(ws.to_string());
+                // 多个 DeepSeek 标签会导致消息发到 A 页、回复出现在 B 页。
+                // 保留最后一个（最新标签），关闭其余，确保单一确定页面。
+                let deepseek_pages: Vec<&Value> = list
+                    .iter()
+                    .filter(|item| item.get("type").and_then(Value::as_str) == Some("page"))
+                    .filter(|item| {
+                        item.get("url")
+                            .and_then(Value::as_str)
+                            .is_some_and(|u| u.contains("chat.deepseek.com"))
+                    })
+                    .collect();
+                if let Some((keep, extras)) = deepseek_pages.split_last() {
+                    for extra in extras {
+                        if let Some(id) = extra.get("id").and_then(Value::as_str) {
+                            let _ = client
+                                .get(format!("http://127.0.0.1:{port}/json/close/{id}"))
+                                .send()
+                                .await;
                         }
+                    }
+                    if let Some(ws) = keep.get("webSocketDebuggerUrl").and_then(Value::as_str) {
+                        return Ok(ws.to_string());
                     }
                 }
             }

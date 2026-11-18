@@ -21,6 +21,10 @@ export function sendMessage(text: string, files: string[]): Promise<string> {
   return invoke<string>("send_message", { text, files });
 }
 
+export function cancelMessage(): Promise<void> {
+  return invoke<void>("cancel_message");
+}
+
 export function browserStatus(): Promise<{
   ready: boolean;
   port: number;

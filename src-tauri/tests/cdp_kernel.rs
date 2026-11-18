@@ -1,6 +1,7 @@
 //! CDP 内核集成测试。默认忽略（需真实浏览器 + 已登录 DeepSeek），手动运行：
 //!   cargo test --test cdp_kernel -- --ignored --nocapture
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use quickquestion_lib::cdp::StreamEvent;
@@ -38,15 +39,20 @@ async fn browser_connects_and_reads_deepseek_page() {
 async fn send_message_streams_delta_then_done() {
     let manager = quickquestion_lib::browser::BrowserManager::new(9222);
     manager.ensure_ready().await.expect("浏览器应就绪");
-    let client = quickquestion_lib::cdp::CdpClient::connect(manager.port())
-        .await
-        .expect("应能连接 CDP");
+    let client = Arc::new(
+        quickquestion_lib::cdp::CdpClient::connect(manager.port())
+            .await
+            .expect("应能连接 CDP"),
+    );
 
     let mut rx = client.subscribe().await;
-    client
-        .send_message("请只回复两个字：收到", &[], 900)
+    client.reset_cancel();
+    let before = client
+        .send_message("请只回复两个字：收到", &[])
         .await
         .expect("应能发送消息");
+    // Rust 侧轮询任务推送 delta/done 到同一通道。
+    client.clone().spawn_reply_poller(before, 900);
 
     let mut delta_count = 0;
     let mut final_text = String::new();

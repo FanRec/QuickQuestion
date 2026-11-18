@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getSettings, updateSettings, type Settings } from "../lib/api";
+import { browserStatus, getSettings, updateSettings, type Settings } from "../lib/api";
 import { applyTheme, loadTheme, type ThemeMode } from "../lib/theme";
 import "./SettingsPanel.css";
 
@@ -7,6 +7,7 @@ export function SettingsPanel() {
   const [settings, setSettings] = useState<Settings>({ browserPort: 9222, quietMs: 900 });
   const [theme, setTheme] = useState<ThemeMode>(loadTheme());
   const [saved, setSaved] = useState(false);
+  const [loginInfo, setLoginInfo] = useState<string>("未检测");
 
   useEffect(() => {
     getSettings()
@@ -17,6 +18,16 @@ export function SettingsPanel() {
   const change = <K extends keyof Settings>(key: K, value: Settings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
     setSaved(false);
+  };
+
+  const checkLogin = async () => {
+    try {
+      const status = await browserStatus();
+      const loggedIn = !status.pageUrl.includes("sign_in") && status.inputReady;
+      setLoginInfo(loggedIn ? "已登录，可以提问" : "未登录，请在浏览器中登录后重试");
+    } catch (e) {
+      setLoginInfo(`检测失败：${String(e)}`);
+    }
   };
 
   const save = async () => {
@@ -37,6 +48,16 @@ export function SettingsPanel() {
   return (
     <div className="settings-panel">
       <h2 className="panel-heading">设置</h2>
+
+      <section className="settings-group">
+        <div className="settings-label">DeepSeek 登录状态</div>
+        <div className="login-check">
+          <button type="button" className="login-check-btn" onClick={() => void checkLogin()}>
+            检测登录状态
+          </button>
+          <span className="settings-hint">{loginInfo}</span>
+        </div>
+      </section>
 
       <section className="settings-group">
         <div className="settings-label">外观</div>

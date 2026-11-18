@@ -25,6 +25,31 @@
   margin-bottom: 10px;
 }
 
+.login-check {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.login-check-btn {
+  padding: 7px 14px;
+  border-radius: var(--radius-control);
+  border: 0.5px solid var(--separator);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 13px;
+  transition: background var(--dur) var(--ease);
+}
+
+.login-check-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.login-check .settings-hint {
+  margin-top: 0;
+}
+
 .theme-switch {
   display: inline-flex;
   padding: 3px;

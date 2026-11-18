@@ -27,9 +27,12 @@ export function HelpPanel() {
       <section className="help-section">
         <h3 className="help-title">快捷键</h3>
         <ul className="help-list">
-          <li><kbd>Esc</kbd> 关闭聊天栏或悬浮列表</li>
+          <li><kbd>Esc</kbd> 关闭聊天栏或悬浮列表（生成中关闭会停止本机接收）</li>
           <li><kbd>Enter</kbd> 发送问题</li>
         </ul>
+        <p className="help-text">
+          说明：取消只能停止本机接收流式内容，DeepSeek 网页可能仍在生成剩余回复。
+        </p>
       </section>
 
       <section className="help-section">

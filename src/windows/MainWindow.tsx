@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import MarkdownIt from "markdown-it";
-import { getExchange, listExchanges } from "../lib/api";
-import { onSelect } from "../lib/events";
+import { deleteExchange, getExchange, listExchanges } from "../lib/api";
+import { onRefresh, onSelect } from "../lib/events";
 import type { Exchange } from "../lib/types";
 import { formatTime } from "../lib/types";
 import { HelpPanel } from "./HelpPanel";
@@ -36,7 +36,8 @@ export function MainWindow() {
   }, []);
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let unlistenSelect: (() => void) | undefined;
+    let unlistenRefresh: (() => void) | undefined;
     void loadList().then((list) => {
       if (list.length > 0) void select(list[0].id);
     });
@@ -44,9 +45,15 @@ export function MainWindow() {
       setPanel("list");
       void select(id);
     }).then((fn) => {
-      unlisten = fn;
+      unlistenSelect = fn;
     });
-    return () => unlisten?.();
+    onRefresh(() => void loadList()).then((fn) => {
+      unlistenRefresh = fn;
+    });
+    return () => {
+      unlistenSelect?.();
+      unlistenRefresh?.();
+    };
   }, [loadList, select]);
 
   const answerHtml = useMemo(
@@ -115,6 +122,23 @@ export function MainWindow() {
                       className="detail-answer-text markdown"
                       dangerouslySetInnerHTML={{ __html: answerHtml }}
                     />
+                  </div>
+                  <div className="detail-actions">
+                    <button
+                      type="button"
+                      className="detail-delete"
+                      onClick={() => {
+                        if (!selected) return;
+                        void deleteExchange(selected.id).then(() => {
+                          setSelected(null);
+                          void loadList().then((list) => {
+                            if (list.length > 0) void select(list[0].id);
+                          });
+                        });
+                      }}
+                    >
+                      删除这条
+                    </button>
                   </div>
                 </>
               ) : (

@@ -42,7 +42,8 @@ impl AppState {
     /// 确保浏览器与 CDP 连接就绪，返回可复用的客户端引用。
     pub async fn ensure_cdp(&self) -> Result<Arc<CdpClient>, AppError> {
         let mut guard = self.cdp.lock().await;
-        if guard.is_none() {
+        let dead = guard.as_ref().is_some_and(|c| !c.is_alive());
+        if guard.is_none() || dead {
             self.browser.ensure_ready().await?;
             *guard = Some(Arc::new(CdpClient::connect(self.browser.port()).await?));
         }
@@ -65,6 +66,7 @@ pub fn run() {
             commands::ping,
             commands::browser_status,
             commands::send_message,
+            commands::cancel_message,
             commands::list_exchanges,
             commands::get_exchange,
             commands::delete_exchange,

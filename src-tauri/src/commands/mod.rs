@@ -47,11 +47,14 @@ pub async fn send_message(
     let app_for_task = app.clone();
     let quiet_ms = state.config.load().quiet_ms;
 
-    cdp.send_message(&text, &files, quiet_ms).await?;
+    cdp.reset_cancel();
+    let before = cdp.send_message(&text, &files).await?;
 
     // 消费流式事件并转发给前端。
     let state_for_task = state.inner().clone();
     let cdp_for_task = cdp.clone();
+    // 启动 Rust 侧 DOM 轮询，逐块推送事件。
+    cdp.clone().spawn_reply_poller(before, quiet_ms);
     let question_text = text.clone();
     let image_names = files
         .iter()
@@ -122,6 +125,16 @@ pub async fn send_message(
     });
 
     Ok(id)
+}
+
+/// 取消当前问答的接收。
+/// 只置取消标志；"已取消"事件由轮询任务统一发出，避免同一事件双源广播。
+#[tauri::command]
+pub async fn cancel_message(state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
+    if let Some(cdp) = state.cdp.lock().await.as_ref() {
+        cdp.cancel_current();
+    }
+    Ok(())
 }
 
 /// 列出全部问答（倒序），悬浮列表与主窗口左栏共用。

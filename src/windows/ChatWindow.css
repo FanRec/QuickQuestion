@@ -59,8 +59,8 @@
   max-width: 94%;
   padding: 8px 12px;
   border-radius: 12px;
-  background: rgba(255, 59, 48, 0.1);
-  color: #d70015;
+  background: var(--danger-soft);
+  color: var(--danger);
   font-size: 12px;
   line-height: 1.5;
   user-select: text;

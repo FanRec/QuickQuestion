@@ -9,6 +9,8 @@
   --text-tertiary: #aeaeb2;
   --accent: #007aff;
   --accent-soft: rgba(0, 122, 255, 0.12);
+  --danger: #d70015;
+  --danger-soft: rgba(255, 59, 48, 0.1);
   --separator: rgba(60, 60, 67, 0.12);
   --bubble-user: #007aff;
   --bubble-user-text: #ffffff;
@@ -37,6 +39,8 @@
     --text-tertiary: #6e6e73;
     --accent: #0a84ff;
     --accent-soft: rgba(10, 132, 255, 0.16);
+    --danger: #ff6961;
+    --danger-soft: rgba(255, 69, 58, 0.16);
     --separator: rgba(84, 84, 88, 0.36);
     --bubble-user: #0a84ff;
     --bubble-user-text: #ffffff;

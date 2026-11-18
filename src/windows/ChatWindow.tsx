@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { GlassCard } from "../components/GlassCard";
 import { IconButton } from "../components/IconButton";
+import { cancelMessage } from "../lib/api";
 import { emitRefresh, onStream } from "../lib/events";
 import { hideWindow } from "../lib/windows";
 import "./ChatWindow.css";
@@ -14,6 +15,18 @@ export function ChatWindow() {
   const [streaming, setStreaming] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const streamingRef = useRef(false);
+
+  const setStream = (value: boolean) => {
+    streamingRef.current = value;
+    setStreaming(value);
+  };
+
+  const closeChat = () => {
+    if (streamingRef.current) void cancelMessage();
+    setStream(false);
+    void hideWindow("chat");
+  };
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -23,11 +36,11 @@ export function ChatWindow() {
         setAnswer(payload.text);
       } else if (payload.type === "done") {
         setAnswer(payload.text);
-        setStreaming(false);
+        setStream(false);
         void emitRefresh();
       } else {
         setError(payload.message);
-        setStreaming(false);
+        setStream(false);
       }
     }).then((fn) => {
       unlisten = fn;
@@ -49,7 +62,7 @@ export function ChatWindow() {
     if (!value && images.length === 0) return;
     setAnswer("");
     setError(null);
-    setStreaming(true);
+    setStream(true);
     setText("");
     const sentImages = images;
     setImages([]);
@@ -57,7 +70,7 @@ export function ChatWindow() {
       await invoke<string>("send_message", { text: value, files: sentImages });
     } catch (e) {
       setError(String(e));
-      setStreaming(false);
+      setStream(false);
     }
   };
 
@@ -66,7 +79,7 @@ export function ChatWindow() {
       <GlassCard className="chat-card">
         <div className="chat-header">
           <span className="chat-title">问点什么</span>
-          <IconButton title="关闭" onClick={() => hideWindow("chat")}>
+          <IconButton title="关闭" onClick={closeChat}>
             <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
               <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
             </svg>
@@ -108,7 +121,7 @@ export function ChatWindow() {
                 e.preventDefault();
                 void submit();
               }
-              if (e.key === "Escape") hideWindow("chat");
+              if (e.key === "Escape") closeChat();
             }}
           />
         </div>
