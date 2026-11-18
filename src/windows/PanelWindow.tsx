@@ -14,6 +14,7 @@ import {
   ORB_H,
   ORB_W,
   PANEL_W,
+  noteWindowPosition,
   placePanelBottomRight,
   resizePanelKeepingAnchor,
   showWindow,
@@ -89,6 +90,17 @@ export function PanelWindow() {
         setReady(true);
       }
     })();
+  }, []);
+
+  // 拖动绕过几何操作直接改 OS 窗口位置，onMoved 回填缓存，锚点才不会失真。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onMoved(({ payload }) => noteWindowPosition("panel", payload.x, payload.y))
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => unlisten?.();
   }, []);
 
   // 形态变化 → 以右下角为锚调整窗口尺寸，球位置不动。

@@ -3,7 +3,7 @@ import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { Composer } from "../components/Composer";
 import { onHotkeyInput } from "../lib/events";
 import { isSending } from "../lib/api";
-import { placeComposer, resizeComposerKeepingBottom, PANEL_W } from "../lib/windows";
+import { noteWindowPosition, placeComposer, resizeComposerKeepingBottom, PANEL_W } from "../lib/windows";
 import "./ComposerWindow.css";
 
 /**
@@ -28,6 +28,17 @@ export function ComposerWindow() {
   // 每次渲染新建函数会不断重置计时器，导致永不收起。
   const close = useCallback(() => {
     void getCurrentWindow().hide();
+  }, []);
+
+  // 拖动绕过几何操作直接改 OS 窗口位置，onMoved 回填缓存，锚点才不会失真。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onMoved(({ payload }) => noteWindowPosition("composer", payload.x, payload.y))
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => unlisten?.();
   }, []);
 
   // 每次唤起都重新摆到当前光标处。
