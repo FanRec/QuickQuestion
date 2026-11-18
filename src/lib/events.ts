@@ -26,3 +26,24 @@ export function onSelect(handler: (id: string) => void) {
 export function emitSelect(id: string) {
   return emit("qq://select", id);
 }
+
+/// 网页当前所在会话发生变化（切会话 / 发消息后绑定成功）。
+export type ActivePayload = { sessionId: string; chatId: string };
+
+export function onActive(handler: (payload: ActivePayload) => void) {
+  return listen<ActivePayload>("qq://active", (event) => handler(event.payload));
+}
+
+/// 全局快捷键 Alt+Q：唤起悬浮面板输入条。
+export function onHotkeyInput(handler: () => void) {
+  return listen("qq://hotkey-input", () => handler());
+}
+
+/// 设置已保存：两套输入条据此重新读取自动消失等配置。
+export function onSettingsChanged(handler: () => void) {
+  return listen("qq://settings-changed", () => handler());
+}
+
+export function emitSettingsChanged() {
+  return emit("qq://settings-changed");
+}

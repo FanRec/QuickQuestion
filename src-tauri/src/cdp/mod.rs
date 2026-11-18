@@ -13,6 +13,17 @@ use crate::error::AppError;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// 从 `https://chat.deepseek.com/a/chat/s/{uuid}...` 中取出 uuid。
+fn parse_chat_id(url: &str) -> String {
+    let Some(rest) = url.split("/a/chat/s/").nth(1) else {
+        return String::new();
+    };
+    rest.split(['?', '#', '/'])
+        .next()
+        .unwrap_or("")
+        .to_string()
+}
+
 /// 页面流式事件：由注入脚本经 CDP binding 推送，再经 mpsc 转给命令层。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -43,14 +54,62 @@ const FIND_INPUT_JS: &str = r#"
 })()
 "#;
 
-/// 读取最后一条助手回复：条数 + 纯文本。每次调用全新查询，不受 SPA 导航影响。
+/// 读取最后一条助手回复，并尽量还原成 Markdown。
+/// 关键在于公式：网页里已经是 KaTeX 渲染后的 DOM，innerText 会把分子分母、上下标
+/// 拆成独立行；必须从 annotation 里取回原始 LaTeX，才能在前端正确重渲。
 const LAST_REPLY_JS: &str = r#"
 (function () {
   var sel = '.ds-assistant-message-main-content, [class*="ds-assistant-message-main-content"]';
   var list = document.querySelectorAll(sel);
   if (!list.length) return JSON.stringify({ count: 0, text: '' });
-  var last = list[list.length - 1];
-  var text = (last.innerText || last.textContent || '').trim();
+  var box = list[list.length - 1].cloneNode(true);
+
+  function texOf(el) {
+    var a = el.querySelector('annotation[encoding="application/x-tex"]');
+    return a ? a.textContent : '';
+  }
+  box.querySelectorAll('.katex-display').forEach(function (el) {
+    var t = texOf(el);
+    el.replaceWith(document.createTextNode(t ? '\n\n$$' + t + '$$\n\n' : ''));
+  });
+  box.querySelectorAll('.katex').forEach(function (el) {
+    var t = texOf(el);
+    el.replaceWith(document.createTextNode(t ? '$' + t + '$' : ''));
+  });
+  // 没取到 LaTeX 的渲染层直接丢弃，避免同样的字符出现两遍。
+  box.querySelectorAll('.katex-html, .katex-mathml').forEach(function (el) { el.remove(); });
+
+  box.querySelectorAll('pre').forEach(function (pre) {
+    var code = pre.querySelector('code');
+    var lang = '';
+    if (code) {
+      var m = (code.className || '').match(/language-([\w+-]+)/);
+      if (m) lang = m[1];
+    }
+    var body = (pre.innerText || '').replace(/\n+$/, '');
+    pre.replaceWith(document.createTextNode('\n```' + lang + '\n' + body + '\n```\n'));
+  });
+
+  ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].forEach(function (tag, i) {
+    box.querySelectorAll(tag).forEach(function (el) {
+      var hashes = new Array(i + 2).join('#');
+      el.replaceWith(document.createTextNode('\n' + hashes + ' ' + (el.innerText || '').trim() + '\n'));
+    });
+  });
+
+  box.querySelectorAll('li').forEach(function (li) {
+    li.replaceWith(document.createTextNode('\n- ' + (li.innerText || '').trim()));
+  });
+
+  box.querySelectorAll('strong, b').forEach(function (el) {
+    el.replaceWith(document.createTextNode('**' + (el.innerText || '') + '**'));
+  });
+  box.querySelectorAll('code').forEach(function (el) {
+    if (el.closest('pre')) return;
+    el.replaceWith(document.createTextNode('`' + (el.innerText || '') + '`'));
+  });
+
+  var text = (box.innerText || box.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
   return JSON.stringify({ count: list.length, text: text });
 })()
 "#;
@@ -287,6 +346,110 @@ impl CdpClient {
         self.cancelled.store(false, Ordering::SeqCst);
     }
 
+    /// 导航到指定地址并等待输入框就绪。切会话和开新会话共用。
+    async fn navigate_and_wait(&self, url: &str, what: &str) -> Result<(), AppError> {
+        self.call("Page.navigate", json!({ "url": url })).await?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while std::time::Instant::now() < deadline {
+            if self.input_ready().await.unwrap_or(false) {
+                // 输入框出现后再稳一拍，避免紧接着发送命中正在重排的页面。
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+        Err(AppError::msg(format!("{what}超时，请重试。")))
+    }
+
+    /// 在网页端开启全新对话：直接导航首页。
+    /// 曾尝试点「开启新对话」按钮，但它是无 role 的 hash-class DIV，点击不生效；
+    /// 导航首页是唯一可靠的做法。
+    pub async fn new_conversation(&self) -> Result<(), AppError> {
+        self.navigate_and_wait("https://chat.deepseek.com/", "开启新会话")
+            .await
+    }
+
+    /// 切到指定的 DeepSeek 会话（SPA 内导航，保留该会话的上下文）。
+    pub async fn navigate_to_chat(&self, chat_id: &str) -> Result<(), AppError> {
+        if chat_id.is_empty() {
+            return Err(AppError::msg("该会话尚未绑定网页会话，无法接续。".to_string()));
+        }
+        let url = format!("https://chat.deepseek.com/a/chat/s/{chat_id}");
+        self.navigate_and_wait(&url, "切换会话").await
+    }
+
+    /// 从当前页面 URL 读出 DeepSeek 会话 UUID；首页/登录页返回空串。
+    pub async fn current_chat_id(&self) -> Result<String, AppError> {
+        let url = self.current_url().await?;
+        Ok(parse_chat_id(&url))
+    }
+
+    /// 把浏览器窗口移到屏幕中央并显示，供用户完成登录。
+    /// 平时窗口被放在屏幕外，登录场景必须让它可见。
+    pub async fn show_browser_window(&self) -> Result<(), AppError> {
+        let url = format!("http://127.0.0.1:{}/json/list", self.port);
+        let list: Vec<Value> = reqwest::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .map_err(|e| AppError::msg(format!("HTTP 客户端初始化失败：{e}")))?
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| AppError::msg(format!("读取浏览器页面失败：{e}")))?
+            .json()
+            .await
+            .map_err(|e| AppError::msg(format!("解析页面列表失败：{e}")))?;
+
+        let page = list
+            .iter()
+            .find(|p| {
+                p.get("url")
+                    .and_then(Value::as_str)
+                    .is_some_and(|u| u.contains("deepseek"))
+            })
+            .ok_or_else(|| AppError::msg("未找到 DeepSeek 页面，请稍后重试。".to_string()))?;
+        let target_id = page
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::msg("未取到页面标识。".to_string()))?
+            .to_string();
+
+        let window = self
+            .call("Browser.getWindowForTarget", json!({ "targetId": target_id }))
+            .await?;
+        let window_id = window
+            .get("windowId")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| AppError::msg("未取到浏览器窗口标识。".to_string()))?;
+
+        // 用页面自己报告的分辨率居中，不额外依赖系统屏幕 API。
+        let screen = self
+            .evaluate("JSON.stringify({ w: screen.availWidth, h: screen.availHeight })")
+            .await
+            .unwrap_or_default();
+        let metrics: Value = serde_json::from_str(&screen).unwrap_or(Value::Null);
+        let sw = metrics.get("w").and_then(Value::as_f64).unwrap_or(1280.0);
+        let sh = metrics.get("h").and_then(Value::as_f64).unwrap_or(800.0);
+        let w = (sw * 0.62).round().max(900.0);
+        let h = (sh * 0.72).round().max(620.0);
+
+        self.call(
+            "Browser.setWindowBounds",
+            json!({
+                "windowId": window_id,
+                "bounds": {
+                    "left": ((sw - w) / 2.0).round() as i64,
+                    "top": ((sh - h) / 2.0).round() as i64,
+                    "width": w as i64,
+                    "height": h as i64,
+                    "windowState": "normal"
+                }
+            }),
+        )
+        .await?;
+        Ok(())
+    }
+
     /// 发送前检测验证码/人机验证页面。
     pub async fn captcha_present(&self) -> bool {
         let js = r#"(function(){
@@ -296,6 +459,56 @@ impl CdpClient {
           return false;
         })()"#;
         self.evaluate(js).await.unwrap_or_default().trim() == "true"
+    }
+
+    /// 把「深度思考」「智能搜索」两个开关同步到目标状态。
+    /// 定位依据是页面稳定的 aria-pressed 语义属性 + 文案，不依赖会变的 hash class。
+    /// 已是目标状态则不动，切换后轮询确认，避免静默失败。
+    pub async fn apply_modes(&self, deep_think: bool, web_search: bool) -> Result<(), AppError> {
+        let js = format!(
+            r#"(async function(){{
+  function find(label){{
+    var list = document.querySelectorAll('[aria-pressed]');
+    for (var i = 0; i < list.length; i++) {{
+      if ((list[i].textContent || '').trim() === label) return list[i];
+    }}
+    return null;
+  }}
+  async function setMode(label, want){{
+    for (var attempt = 0; attempt < 2; attempt++) {{
+      var el = find(label);
+      if (!el) return 'MISSING';
+      if ((el.getAttribute('aria-pressed') === 'true') === want) return 'OK';
+      el.click();
+      for (var i = 0; i < 8; i++) {{
+        await new Promise(function(r){{ setTimeout(r, 120); }});
+        var now = find(label);
+        if (now && (now.getAttribute('aria-pressed') === 'true') === want) return 'OK';
+      }}
+    }}
+    return 'FAIL';
+  }}
+  var a = await setMode('深度思考', {deep});
+  var b = await setMode('智能搜索', {web});
+  return a + '|' + b;
+}})()"#,
+            deep = deep_think,
+            web = web_search,
+        );
+        let out = self.evaluate(&js).await?;
+        let (a, b) = out.split_once('|').unwrap_or((out.as_str(), ""));
+        for (label, state) in [("深度思考", a), ("智能搜索", b)] {
+            if state == "OK" {
+                continue;
+            }
+            let reason = match state {
+                "MISSING" => "页面上找不到该开关，页面结构可能已变化",
+                "FAIL" => "切换后状态未生效",
+                _ => "未知错误",
+            };
+            return Err(AppError::msg(format!("设置「{label}」失败：{reason}")));
+        }
+        Ok(())
     }
 
     /// 通过 CDP 设置文件输入（图片上传）。
@@ -503,4 +716,26 @@ async fn find_page_socket(port: u16) -> Result<String, AppError> {
     Err(AppError::msg(
         "未找到 DeepSeek 页面，请确认浏览器已启动并登录 chat.deepseek.com。",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_chat_id;
+
+    #[test]
+    fn parses_chat_id_from_session_url() {
+        let url = "https://chat.deepseek.com/a/chat/s/b49ad49d-3f41-446f-8c5c-b827013c4b92";
+        assert_eq!(parse_chat_id(url), "b49ad49d-3f41-446f-8c5c-b827013c4b92");
+    }
+
+    #[test]
+    fn strips_query_and_fragment() {
+        let url = "https://chat.deepseek.com/a/chat/s/abc-123?foo=1#bar";
+        assert_eq!(parse_chat_id(url), "abc-123");
+    }
+
+    #[test]
+    fn empty_on_homepage() {
+        assert_eq!(parse_chat_id("https://chat.deepseek.com/"), "");
+    }
 }

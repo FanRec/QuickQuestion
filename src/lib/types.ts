@@ -1,5 +1,15 @@
+export interface Session {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  /** 对应的 DeepSeek 网页会话 UUID；空表示尚未绑定。 */
+  deepseekChatId: string;
+}
+
 export interface Exchange {
   id: string;
+  sessionId: string;
   createdAt: number;
   questionText: string;
   answerText: string;

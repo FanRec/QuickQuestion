@@ -1,9 +1,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./styles/global.css";
-import { OrbWindow } from "./windows/OrbWindow";
-import { ChatWindow } from "./windows/ChatWindow";
-import { HistoryWindow } from "./windows/HistoryWindow";
+import { PanelWindow } from "./windows/PanelWindow";
+import { ComposerWindow } from "./windows/ComposerWindow";
 import { MainWindow } from "./windows/MainWindow";
 import { applyTheme, loadTheme, watchTheme } from "./lib/theme";
 
@@ -13,15 +12,13 @@ watchTheme();
 
 function App() {
   switch (windowId) {
-    case "chat":
-      return <ChatWindow />;
-    case "history":
-      return <HistoryWindow />;
     case "main":
       return <MainWindow />;
-    case "orb":
+    case "composer":
+      return <ComposerWindow />;
+    case "panel":
     default:
-      return <OrbWindow />;
+      return <PanelWindow />;
   }
 }
 

@@ -31,6 +31,41 @@
   gap: 12px;
 }
 
+.settings-textarea {
+  width: 100%;
+  min-height: 84px;
+  max-height: 200px;
+  padding: 9px 12px;
+  border-radius: var(--radius-control);
+  border: 0.5px solid var(--separator);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+  outline: none;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.settings-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.settings-textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.settings-textarea::-webkit-scrollbar {
+  width: 4px;
+}
+
+.settings-textarea::-webkit-scrollbar-thumb {
+  background: var(--separator);
+  border-radius: 2px;
+}
+
 .login-check-btn {
   padding: 7px 14px;
   border-radius: var(--radius-control);
@@ -100,6 +135,43 @@
   font-size: 11px;
   color: var(--text-tertiary);
   margin-top: 6px;
+}
+
+.settings-advanced {
+  margin-bottom: 24px;
+  padding-bottom: 24px;
+  border-bottom: 0.5px solid var(--separator);
+}
+
+.settings-advanced summary {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-advanced summary::before {
+  content: "▸";
+  font-size: 10px;
+}
+
+.settings-advanced[open] summary::before {
+  content: "▾";
+}
+
+.settings-advanced summary:hover {
+  color: var(--text-secondary);
+}
+
+.settings-advanced-body {
+  margin-top: 16px;
 }
 
 .settings-footer {

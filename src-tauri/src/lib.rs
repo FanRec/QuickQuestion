@@ -6,10 +6,11 @@ mod error;
 pub mod model;
 mod store;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 use tokio::sync::Mutex;
 
 use browser::BrowserManager;
@@ -24,6 +25,21 @@ pub struct AppState {
     pub cdp: Mutex<Option<Arc<CdpClient>>>,
     pub store: SqliteStore,
     pub config: ConfigService,
+    /// 全局发送互斥：一个问答周期（发送到 done/error）内拒绝第二次提交。
+    pub sending: AtomicBool,
+}
+
+impl AppState {
+    /// 抢到发送权返回 true；已被占用返回 false。
+    pub fn try_begin_send(&self) -> bool {
+        self.sending
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+
+    pub fn end_send(&self) {
+        self.sending.store(false, Ordering::SeqCst);
+    }
 }
 
 impl AppState {
@@ -36,6 +52,7 @@ impl AppState {
             cdp: Mutex::new(None),
             store: SqliteStore::init()?,
             config,
+            sending: AtomicBool::new(false),
         })
     }
 
@@ -60,6 +77,36 @@ pub fn run() {
         .manage(state)
         .setup(|app| {
             setup_tray(app)?;
+            // 全局唤起输入条：快捷键来自设置（默认 Alt+Q）。
+            // 注册失败（被别的软件占用）不能让应用起不来，只记日志。
+            #[cfg(desktop)]
+            {
+                use tauri::Emitter;
+                use tauri_plugin_global_shortcut::ShortcutState;
+
+                let hotkey = app
+                    .try_state::<Arc<AppState>>()
+                    .map(|s| s.config.load().hotkey)
+                    .unwrap_or_else(|| "Alt+Q".to_string());
+                let normalized = hotkey.to_lowercase().replace(' ', "");
+                if !normalized.is_empty() {
+                    let builder = tauri_plugin_global_shortcut::Builder::new()
+                        .with_handler(|app, _shortcut, event| {
+                            if event.state == ShortcutState::Pressed {
+                                let _ = app.emit("qq://hotkey-input", ());
+                            }
+                        })
+                        .with_shortcuts([normalized.as_str()]);
+                    match builder {
+                        Ok(b) => {
+                            if let Err(e) = app.handle().plugin(b.build()) {
+                                eprintln!("注册全局快捷键失败：{e}");
+                            }
+                        }
+                        Err(e) => eprintln!("全局快捷键格式无效（{hotkey}）：{e}"),
+                    }
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -68,9 +115,17 @@ pub fn run() {
             commands::send_message,
             commands::cancel_message,
             commands::list_exchanges,
+            commands::list_sessions,
+            commands::create_session,
+            commands::active_session,
+            commands::is_sending,
+            commands::remember_session,
+            commands::delete_session,
             commands::get_exchange,
             commands::delete_exchange,
             commands::copy_markdown,
+            commands::save_temp_image,
+            commands::open_login_window,
             commands::get_settings,
             commands::update_settings,
         ])
@@ -99,7 +154,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id.as_ref() {
             id if id == show_orb_id.as_ref() => {
-                if let Some(win) = app.get_webview_window("orb") {
+                if let Some(win) = app.get_webview_window("panel") {
                     let _ = win.show();
                     let _ = win.set_focus();
                 }
@@ -126,11 +181,10 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             } = event
             {
                 let app = tray.app_handle();
-                if let Some(win) = app.get_webview_window("orb") {
+                if let Some(win) = app.get_webview_window("panel") {
                     let _ = win.show();
                     let _ = win.set_focus();
                 }
-                let _ = app.emit("qq://tray-show-orb", ());
             }
         })
         .build(app)?;

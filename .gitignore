@@ -5,7 +5,5 @@ src-tauri/gen/schemas/
 .vite/
 *.local
 .DS_Store
-dev.log
-test.log
-login-browser.log
+*.log
 .workbuddy/

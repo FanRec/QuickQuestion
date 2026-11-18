@@ -8,6 +8,25 @@ use crate::error::AppError;
 pub struct Settings {
     pub browser_port: u16,
     pub quiet_ms: u64,
+    /// 会话首条问答前注入的长期设定；为空则不注入。
+    #[serde(default)]
+    pub system_prompt: String,
+    /// 上次退出前选中的本地会话，启动时恢复。
+    #[serde(default)]
+    pub last_session_id: String,
+    /// 全局唤起快捷键，格式如 "Alt+Q"；留空则不注册。
+    #[serde(default)]
+    pub hotkey: String,
+    /// 回复气泡自动消失秒数；0 表示永不消失。
+    #[serde(default = "default_bubble_hide")]
+    pub bubble_hide_secs: u64,
+    /// 独立输入条整体自动收起秒数；0 表示永不收起。
+    #[serde(default)]
+    pub popup_hide_secs: u64,
+}
+
+fn default_bubble_hide() -> u64 {
+    5
 }
 
 impl Default for Settings {
@@ -15,6 +34,11 @@ impl Default for Settings {
         Self {
             browser_port: 9222,
             quiet_ms: 900,
+            system_prompt: String::new(),
+            last_session_id: String::new(),
+            hotkey: "Alt+Q".to_string(),
+            bubble_hide_secs: 5,
+            popup_hide_secs: 0,
         }
     }
 }
@@ -61,6 +85,9 @@ fn normalize(mut s: Settings) -> Settings {
     }
     if !(200..=5000).contains(&s.quiet_ms) {
         s.quiet_ms = 900;
+    }
+    if s.hotkey.trim().is_empty() {
+        s.hotkey = "Alt+Q".to_string();
     }
     s
 }

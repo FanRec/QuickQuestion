@@ -55,6 +55,12 @@ impl BrowserManager {
             "--no-default-browser-check".to_string(),
             "--disable-blink-features=AutomationControlled".to_string(),
             "--lang=zh-CN".to_string(),
+            // 窗口放在屏幕外时 Chromium 会判定为 occluded 并把页面置为 hidden，
+            // DeepSeek 的虚拟列表随即不渲染任何消息 DOM，导致读不到回复。
+            // 这三个参数让离屏窗口的页面保持可见与正常渲染（实测验证）。
+            "--disable-backgrounding-occluded-windows".to_string(),
+            "--disable-renderer-backgrounding".to_string(),
+            "--disable-background-timer-throttling".to_string(),
             "--window-position=-10000,-10000".to_string(),
             "--window-size=1200,900".to_string(),
             DEEPSEEK_URL.to_string(),

@@ -1,8 +1,68 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Exchange } from "./types";
+import type { Exchange, Session } from "./types";
 
-export function listExchanges(): Promise<Exchange[]> {
-  return invoke<Exchange[]>("list_exchanges");
+export interface SendResult {
+  exchangeId: string;
+  sessionId: string;
+}
+
+/** 发送消息。会话编排在后端完成；前端只表达"是否要开新会话"的意图。 */
+export function sendMessage(input: {
+  text: string;
+  files: string[];
+  deepThink: boolean;
+  webSearch: boolean;
+  sessionId: string;
+  injectPrompt: boolean;
+  newSession: boolean;
+}): Promise<SendResult> {
+  return invoke<SendResult>("send_message", input);
+}
+
+/// 后端错误是 `{ message }` 结构，直接 String() 会变成 "[object Object]"。
+export function errText(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      // 落到 String
+    }
+  }
+  return String(error);
+}
+
+export function listExchanges(sessionId?: string): Promise<Exchange[]> {
+  return invoke<Exchange[]>("list_exchanges", { sessionId: sessionId ?? null });
+}
+
+export function listSessions(): Promise<Session[]> {
+  return invoke<Session[]>("list_sessions");
+}
+
+/** 网页当前所在会话；未绑定任何本地会话时返回 null。 */
+export function activeSession(): Promise<Session | null> {
+  return invoke<Session | null>("active_session");
+}
+
+export function rememberSession(id: string): Promise<void> {
+  return invoke<void>("remember_session", { id });
+}
+
+/** 是否有问答正在进行中（全局，两套输入条共用）。 */
+export function isSending(): Promise<boolean> {
+  return invoke<boolean>("is_sending");
+}
+
+/// 新建会话：会同时在网页端开一个新对话。
+export function createSession(title?: string): Promise<Session> {
+  return invoke<Session>("create_session", { title: title ?? null });
+}
+
+export function deleteSession(id: string): Promise<void> {
+  return invoke<void>("delete_session", { id });
 }
 
 export function getExchange(id: string): Promise<Exchange | null> {
@@ -15,10 +75,6 @@ export function deleteExchange(id: string): Promise<void> {
 
 export function copyMarkdown(id: string): Promise<string> {
   return invoke<string>("copy_markdown", { id });
-}
-
-export function sendMessage(text: string, files: string[]): Promise<string> {
-  return invoke<string>("send_message", { text, files });
 }
 
 export function cancelMessage(): Promise<void> {
@@ -37,6 +93,12 @@ export function browserStatus(): Promise<{
 export interface Settings {
   browserPort: number;
   quietMs: number;
+  systemPrompt: string;
+  hotkey: string;
+  /** 回复气泡自动消失秒数；0 = 永不。 */
+  bubbleHideSecs: number;
+  /** 独立输入条整体自动收起秒数；0 = 永不。 */
+  popupHideSecs: number;
 }
 
 export function getSettings(): Promise<Settings> {
