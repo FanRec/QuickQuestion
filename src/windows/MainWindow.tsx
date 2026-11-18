@@ -23,6 +23,8 @@ import type { Exchange, Session } from "../lib/types";
 import { formatTime } from "../lib/types";
 import { HelpPanel } from "./HelpPanel";
 import { SettingsPanel } from "./SettingsPanel";
+import mascot from "../assets/mascot.png";
+import logo from "../assets/logo.png";
 import "./MainWindow.css";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true }).use(katex);
@@ -288,12 +290,13 @@ export function MainWindow() {
       onClick={() => menu && setMenu(null)}
       onContextMenu={(e) => e.preventDefault()}
     >
-      <div className="menu-bar">
-        <div className="menu-brand">
-          <span className="menu-logo">✦</span>
+      <div className="menu-bar" data-tauri-drag-region>
+        <div className="menu-brand" data-tauri-drag-region>
+          <img className="menu-logo" src={logo} alt="" draggable={false} />
           <span>QuickQuestion</span>
         </div>
-        <div className="menu-items">
+        <div className="menu-right">
+          <div className="menu-items">
           <button
             type="button"
             className={`menu-item ${panel === "list" ? "is-active" : ""}`}
@@ -315,6 +318,39 @@ export function MainWindow() {
           >
             帮助
           </button>
+          </div>
+          <div className="win-controls">
+            <button
+              type="button"
+              className="win-btn"
+              title="最小化"
+              onClick={() => void getCurrentWindow().minimize()}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                <path d="M5 12h14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="win-btn"
+              title="最大化 / 还原"
+              onClick={() => void getCurrentWindow().toggleMaximize()}
+            >
+              <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+                <rect x="5" y="5" width="14" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.6" fill="none" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="win-btn win-btn--close"
+              title="隐藏到托盘"
+              onClick={() => void getCurrentWindow().hide()}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -413,6 +449,9 @@ export function MainWindow() {
                   </>
                 )}
               </div>
+              <div className="sidebar-footer">
+                <img className="sidebar-mascot" src={mascot} alt="" draggable={false} />
+              </div>
             </aside>
 
             <main className="main-detail">
@@ -471,7 +510,7 @@ export function MainWindow() {
               <div className="detail-composer">
                 <textarea
                   ref={composerRef}
-                  className="composer-input"
+                  className="main-input"
                   rows={1}
                   placeholder="提问…（Shift+Enter 换行）"
                   value={draft}
@@ -488,7 +527,7 @@ export function MainWindow() {
                 />
                 <button
                   type="button"
-                  className={`composer-mode${newSession ? " is-on" : ""}`}
+                  className={`main-mode-btn${newSession ? " is-on" : ""}`}
                   title={newSession ? "新会话：开（发送后自动关闭）" : "新会话：关（接续当前会话）"}
                   onClick={() => setNewSession((v) => !v)}
                 >
@@ -498,7 +537,7 @@ export function MainWindow() {
                 </button>
                 <button
                   type="button"
-                  className={`composer-mode${deepThink ? " is-on" : ""}`}
+                  className={`main-mode-btn${deepThink ? " is-on" : ""}`}
                   title={deepThink ? "深度思考：开" : "深度思考：关"}
                   onClick={() => setDeepThink((v) => !v)}
                 >
@@ -508,7 +547,7 @@ export function MainWindow() {
                 </button>
                 <button
                   type="button"
-                  className={`composer-mode${webSearch ? " is-on" : ""}`}
+                  className={`main-mode-btn${webSearch ? " is-on" : ""}`}
                   title={webSearch ? "联网搜索：开" : "联网搜索：关"}
                   onClick={() => setWebSearch((v) => !v)}
                 >
@@ -520,7 +559,7 @@ export function MainWindow() {
                 {streaming ? (
                   <button
                     type="button"
-                    className="composer-stop"
+                    className="main-stop"
                     title="打断回复"
                     onClick={() => {
                       void cancelMessage();
@@ -533,7 +572,7 @@ export function MainWindow() {
                     </svg>
                   </button>
                 ) : (
-                  <button type="button" className="composer-send" title="发送" onClick={() => void send()}>
+                  <button type="button" className="main-send" title="发送" onClick={() => void send()}>
                     <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
                       <path d="M4 12l16-8-6 16-2.5-6.5L4 12z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" strokeLinecap="round" fill="none" />
                     </svg>

@@ -4,6 +4,9 @@
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
+  /* 内容 flex-end 会贴到窗口底，把描边裁掉；padding 把它垫起来，
+     和 applyHeight 的顶部余量（+16 中的上半 8px）各管一头。 */
+  padding-bottom: 8px;
   overflow: hidden;
   box-sizing: border-box;
 }

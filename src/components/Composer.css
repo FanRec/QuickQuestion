@@ -9,8 +9,7 @@
   flex-direction: column;
   justify-content: flex-end;
   box-sizing: border-box;
-  /* 子元素的下外边距不参与父高度测量，用内边距补出底部留白，
-     这样实测高度就是窗口该有的高度，输入条不会贴底。 */
+  /* 子元素的下外边距不参与父高度测量，用内边距补出底部留白。 */
   padding-bottom: 8px;
 }
 
@@ -23,21 +22,33 @@
   min-width: 0;
   box-sizing: border-box;
   margin: 0 auto 10px;
-  padding: 8px 12px;
-  max-height: 148px;
-  overflow-y: auto;
-  border-radius: 14px;
-  background: var(--surface-raised);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  border: 0.5px solid var(--separator);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  padding: 12px 14px 10px;
+  border-radius: var(--radius-lg);
+  background: var(--history-bg);
+  border: 1px solid var(--history-border);
+  box-shadow: var(--shadow-2);
   color: var(--text-primary);
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
   user-select: text;
+}
+
+/* 文本区独立滚动：吉祥物和按钮不随内容滚走 */
+.composer-bubble-text {
+  max-height: 148px;
+  overflow-y: auto;
+  animation: composer-fade-in 0.25s ease;
+}
+
+.composer-bubble-text::-webkit-scrollbar {
+  width: 4px;
+}
+
+.composer-bubble-text::-webkit-scrollbar-thumb {
+  background: var(--history-border);
+  border-radius: 2px;
 }
 
 .composer-bubble--error {
@@ -46,22 +57,133 @@
   color: var(--danger);
 }
 
-/* 叉号：右下角手动关闭气泡（自动消失可配置，这里给个立即关掉的办法）。 */
+/* ── 回答前骨架屏 ── */
+
+.composer-skeleton {
+  position: relative;
+  padding: 2px 0 2px;
+}
+
+.composer-skeleton-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.composer-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 2px;
+}
+
+.composer-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: composer-dot 1.2s ease-in-out infinite;
+}
+
+.composer-dots i:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.composer-dots i:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+@keyframes composer-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.composer-skeleton-lines {
+  margin-top: 10px;
+  padding-right: 92px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.composer-skeleton-lines i {
+  height: 10px;
+  border-radius: 5px;
+  background:
+    linear-gradient(100deg, transparent 25%, var(--surface) 50%, transparent 75%),
+    var(--accent-soft);
+  background-size: 200% 100%;
+  animation: composer-shimmer 1.5s ease-in-out infinite;
+}
+
+.composer-skeleton-lines i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.composer-skeleton-lines i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes composer-shimmer {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -180% 0;
+  }
+}
+
+.composer-skeleton-mascot {
+  position: absolute;
+  right: 0;
+  bottom: -2px;
+  width: 84px;
+  height: auto;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 骨架屏切到真实文本时淡入，衔接更自然 */
+.composer-bubble-text {
+  animation: composer-fade-in 0.25s ease;
+}
+
+@keyframes composer-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 叉号：手动关闭气泡（自动消失可配置，这里给个立即关掉的办法）。 */
 .composer-bubble-close {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 16px;
-  height: 16px;
+  top: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   color: var(--text-tertiary);
-  background: transparent;
   opacity: 0;
-  transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease), color var(--dur) var(--ease);
+  transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease),
+    color var(--dur) var(--ease);
 }
 
 .composer-bubble:hover .composer-bubble-close {
@@ -69,60 +191,71 @@
 }
 
 .composer-bubble-close:hover {
-  background: var(--bubble-ai);
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 
 .composer-bubble::-webkit-scrollbar {
-  width: 3px;
-}
-
-.composer-bubble::-webkit-scrollbar-track {
-  background: transparent;
+  width: 4px;
 }
 
 .composer-bubble::-webkit-scrollbar-thumb {
-  background: var(--separator);
+  background: var(--separator-strong);
   border-radius: 2px;
-}
-
-.composer-bubble:hover::-webkit-scrollbar-thumb {
-  background: var(--text-tertiary);
 }
 
 .composer-bubble-actions {
   flex: none;
-  width: calc(100% - 16px);
-  max-width: calc(100% - 16px);
-  margin: 0 auto 6px;
   display: flex;
-  justify-content: flex-end;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.composer-bubble-btns {
+  display: flex;
   gap: 6px;
-  box-sizing: border-box;
+}
+
+.composer-bubble-mascot {
+  flex: none;
+  width: 78px;
+  height: auto;
+  margin: -26px -4px -14px 0;
+  pointer-events: none;
+  user-select: none;
 }
 
 .composer-bubble-btn {
-  padding: 3px 10px;
-  border-radius: 9px;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: 11.5px;
   color: var(--text-secondary);
-  background: var(--bubble-ai);
-  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+  background: var(--surface);
+  border: 1px solid var(--history-border);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
 }
 
 .composer-bubble-btn:hover {
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border-color: var(--accent);
 }
 
 .composer-login-btn {
   align-self: flex-start;
-  margin-top: 7px;
-  padding: 4px 12px;
-  border-radius: 11px;
+  margin-top: 8px;
+  height: 28px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
   background: var(--accent);
   color: #ffffff;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   transition: filter var(--dur) var(--ease);
 }
@@ -152,8 +285,8 @@
   flex: none;
   width: 40px;
   height: 40px;
-  border-radius: 9px;
-  border: 0.5px solid var(--separator);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--separator);
   background: var(--surface);
 }
 
@@ -161,7 +294,7 @@
   display: block;
   width: 100%;
   height: 100%;
-  border-radius: 8px;
+  border-radius: 7px;
   object-fit: cover;
   transform-origin: top left;
   transition: transform 140ms var(--ease), box-shadow 140ms var(--ease);
@@ -172,7 +305,7 @@
   z-index: 20;
   transform: scale(3.2);
   border-radius: 10px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-3);
 }
 
 .composer-image-del {
@@ -180,16 +313,16 @@
   top: -5px;
   right: -5px;
   z-index: 30;
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.62);
   color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.6);
   opacity: 0;
   transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease);
 }
@@ -211,14 +344,20 @@
   margin: 0 auto;
   height: 20px;
   padding: 0 4px;
-  box-sizing: border-box;
   display: flex;
   align-items: center;
-  font-size: 10.5px;
-  color: var(--text-tertiary);
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  box-sizing: border-box;
+}
+
+.composer-context svg {
+  flex: none;
 }
 
 .composer-context--new {
@@ -234,39 +373,37 @@
   width: calc(100% - 16px);
   max-width: calc(100% - 16px);
   min-width: 0;
-  min-height: 34px;
   margin: 0 auto 8px;
-  padding: 7px 6px 7px 14px;
+  padding: 8px 8px 8px 14px;
   display: flex;
   align-items: flex-end;
   gap: 2px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--separator);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
   box-sizing: border-box;
-  border-radius: 19px;
-  border: 0.5px solid var(--separator);
-  background: var(--surface-raised);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.08);
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 
+/* 细描边代替外扩光晕：透明窗口里大晕会被窗口边缘裁掉 */
 .composer-input-wrap:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 1.5px var(--accent);
 }
 
 .composer-input {
   flex: 1;
   min-width: 0;
-  height: 20px;
+  height: 24px;
   max-height: 96px;
   padding: 0;
   border: none;
   background: transparent;
   color: var(--text-primary);
   font-family: inherit;
-  font-size: 13px;
-  line-height: 20px;
+  font-size: 13.5px;
+  line-height: 24px;
   resize: none;
   overflow-y: auto;
   outline: none;
@@ -277,7 +414,7 @@
 }
 
 .composer-input::-webkit-scrollbar-thumb {
-  background: var(--separator);
+  background: var(--separator-strong);
   border-radius: 2px;
 }
 
@@ -291,15 +428,19 @@
 
 .composer-stop-btn {
   flex: none;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   color: #ffffff;
-  background: var(--danger);
+  background: radial-gradient(circle at 35% 30%, #ff8f8f, #ef4444 58%, #d63b3b 100%);
+  box-shadow:
+    inset 0 1px 3px rgba(255, 255, 255, 0.55),
+    inset 0 -2px 5px rgba(150, 20, 20, 0.4),
+    0 2px 8px rgba(239, 68, 68, 0.35);
   transition: filter var(--dur) var(--ease);
 }
 
@@ -309,8 +450,8 @@
 
 .composer-mode-btn {
   flex: none;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -324,7 +465,7 @@
 
 .composer-mode-btn:hover {
   color: var(--text-secondary);
-  background: var(--bubble-ai);
+  background: var(--surface-hover);
 }
 
 .composer-mode-btn--on {

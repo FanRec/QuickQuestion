@@ -20,8 +20,8 @@ export const INPUT_H = 46;
 /** 待发送图片那一行（缩略图 40 + 间距 6）。 */
 export const IMAGES_H = 46;
 export const BUBBLE_MAX_H = 148;
-/** 历史形态的整窗高度（含球行）。 */
-export const HISTORY_H = 380;
+/** 历史形态的整窗高度（含球行）：标题 + 搜索 + 列表 + 底部入口。 */
+export const HISTORY_H = 512;
 
 export async function showWindow(label: WindowLabel) {
   const win = await WebviewWindow.getByLabel(label);
