@@ -1,0 +1,56 @@
+name: CI
+
+# 三平台并行：编译检查 + 单元测试 + 前端构建。
+# 跨平台编译错误（平台相关 API、路径分隔符等）在这里暴露，而不是发版时。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Linux 编译依赖（Tauri v2 官方清单）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: 安装 Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Rust 编译产物
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: Clippy（含全部平台分支的编译检查）
+        working-directory: src-tauri
+        run: cargo clippy --all-targets
+
+      - name: 单元测试
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: 前端构建（tsc + vite）
+        run: npm run build

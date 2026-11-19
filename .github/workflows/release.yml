@@ -1,0 +1,71 @@
+name: Release
+
+# 推送 v 开头的 tag（如 v0.1.0）即触发：四平台并行构建，
+# 产物上传到 GitHub Release **草稿**，人工检查后点 Publish 正式发布。
+# 想全自动发布：把 releaseDraft 改为 false。
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    permissions:
+      contents: write # 创建 Release 并上传产物
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "windows-latest"
+            args: ""
+          - platform: "ubuntu-latest"
+            args: ""
+          - platform: "macos-latest" # Apple Silicon（M1 及以上）
+            args: "--target aarch64-apple-darwin"
+          - platform: "macos-latest" # Intel 芯片
+            args: "--target x86_64-apple-darwin"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Linux 打包依赖（Tauri v2 官方清单）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: 安装 Rust stable（macOS 装双架构 target）
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: 缓存 Rust 编译产物
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 构建并上传 Release 草稿
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "QuickQuestion v__VERSION__"
+          releaseBody: >-
+            Windows 包未签名：SmartScreen 提示时点「更多信息 → 仍要运行」。
+            macOS 包未签名：首次打开若被拦截，请右键 App →「打开」，
+            或执行 xattr -cr "/Applications/QuickQuestion.app"。
+            需要 Microsoft Edge 或 Chrome，并在 chat.deepseek.com 登录。
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
