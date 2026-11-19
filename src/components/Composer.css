@@ -154,11 +154,6 @@
   user-select: none;
 }
 
-/* 骨架屏切到真实文本时淡入，衔接更自然 */
-.composer-bubble-text {
-  animation: composer-fade-in 0.25s ease;
-}
-
 @keyframes composer-fade-in {
   from {
     opacity: 0;
@@ -193,15 +188,6 @@
 .composer-bubble-close:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
-}
-
-.composer-bubble::-webkit-scrollbar {
-  width: 4px;
-}
-
-.composer-bubble::-webkit-scrollbar-thumb {
-  background: var(--separator-strong);
-  border-radius: 2px;
 }
 
 .composer-bubble-actions {
@@ -358,10 +344,6 @@
 
 .composer-context svg {
   flex: none;
-}
-
-.composer-context--new {
-  color: var(--accent);
 }
 
 /* ── 输入胶囊 ── */

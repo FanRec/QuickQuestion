@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MarkdownIt from "markdown-it";
 import { katex } from "@mdit/plugin-katex";
 import "katex/dist/katex.min.css";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeHtml, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { markdownToHtml } from "../lib/clipboard";
 import {
   activeSession,
@@ -12,6 +13,7 @@ import {
   copyMarkdown,
   deleteExchange,
   deleteSession,
+  errKind,
   errText,
   listExchanges,
   listSessions,
@@ -19,8 +21,9 @@ import {
   sendMessage,
 } from "../lib/api";
 import { onActive, onRefresh, onSelect, onStream } from "../lib/events";
+import { hasImageFiles, savePastedImages } from "../lib/paste";
 import type { Exchange, Session } from "../lib/types";
-import { formatTime } from "../lib/types";
+import { formatTime, questionLabel } from "../lib/types";
 import { HelpPanel } from "./HelpPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import mascot from "../assets/mascot.png";
@@ -57,9 +60,15 @@ export function MainWindow() {
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<Menu | null>(null);
   // kind 决定配色：成功用低强调的绿色，失败才用危险红。
-  const [notice, setNotice] = useState<{ text: string; kind: "ok" | "error" } | null>(null);
+  const [notice, setNotice] = useState<{
+    text: string;
+    kind: "ok" | "error";
+    code?: string;
+  } | null>(null);
 
   const [draft, setDraft] = useState("");
+  // 粘贴进来的图片路径；发送时交给后端上传，发送失败会回滚。
+  const [images, setImages] = useState<string[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [streamQuestion, setStreamQuestion] = useState("");
   const [streamAnswer, setStreamAnswer] = useState("");
@@ -70,6 +79,8 @@ export function MainWindow() {
   const streamingRef = useRef(false);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 后端 stream 是全局广播：只接受本窗口这一轮的 exchangeId。
+  const pendingExchangeIdRef = useRef<string | null>(null);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -82,11 +93,14 @@ export function MainWindow() {
     }
   }, []);
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (): Promise<Exchange[]> => {
     try {
-      setAllExchanges(await listExchanges());
+      const list = await listExchanges();
+      setAllExchanges(list);
+      return list;
     } catch {
       setAllExchanges([]);
+      return [];
     }
   }, []);
 
@@ -132,16 +146,14 @@ export function MainWindow() {
   // 首次进入：恢复上次选中的会话，选中该会话最新一条。
   useEffect(() => {
     void (async () => {
-      await Promise.all([loadSessions(), loadAll()]);
+      const [sessions, all] = await Promise.all([loadSessions(), loadAll()]);
       const settings = await invoke<{ lastSessionId: string }>("get_settings")
         .catch(() => ({ lastSessionId: "" }));
-      const list = await listSessions().catch(() => []);
-      const chosen = list.find((s) => s.id === settings.lastSessionId) ?? list[0];
+      const chosen = sessions.find((s) => s.id === settings.lastSessionId) ?? sessions[0];
       if (chosen) {
         setCurrentId(chosen.id);
         setExpanded(new Set([chosen.id]));
       }
-      const all = await listExchanges().catch(() => []);
       const mine = all.filter((e) => e.sessionId === chosen?.id);
       if (mine.length) setSelectedId(mine[mine.length - 1].id);
       const active = await activeSession().catch(() => null);
@@ -179,6 +191,8 @@ export function MainWindow() {
       }),
       onStream((payload) => {
         if (!streamingRef.current) return;
+        const mine = pendingExchangeIdRef.current;
+        if (!mine || payload.exchangeId !== mine) return;
         if (payload.type === "delta") {
           setStreamAnswer(payload.text);
         } else if (payload.type === "done") {
@@ -192,7 +206,7 @@ export function MainWindow() {
         } else {
           streamingRef.current = false;
           setStreaming(false);
-          setNotice({ text: payload.message, kind: "error" });
+          setNotice({ text: payload.message, kind: "error", code: payload.kind });
         }
       }),
     ]).then((fns) => unlisteners.push(...fns));
@@ -283,28 +297,61 @@ export function MainWindow() {
     );
   };
 
+  // markdown 区点击：链接一律开系统浏览器——网页内的 <a> 若不拦截，
+  // 会把本窗口导航到外部站点，应用 UI 直接丢失，外部页面还带着 IPC 权限运行。
+  const onMarkdownClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const link = (e.target as HTMLElement).closest("a");
+    if (link) {
+      e.preventDefault();
+      const href = link.getAttribute("href") ?? "";
+      void openUrl(href).catch((err) =>
+        setNotice({ text: `打开链接失败：${errText(err)}`, kind: "error" }),
+      );
+      return;
+    }
+    copyCode(e);
+  };
+
+  // 与悬浮输入条一致：只认粘贴进来的图片，文字粘贴走浏览器默认行为。
+  // preventDefault 必须在同步阶段调用，事件派发不会等 async handler。
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!hasImageFiles(e.clipboardData)) return;
+    e.preventDefault();
+    void savePastedImages(e.clipboardData).then(({ paths, errors }) => {
+      setImages((prev) => [...prev, ...paths]);
+      if (errors.length > 0) {
+        setNotice({ text: errors.join("\n"), kind: "error" });
+        window.setTimeout(() => setNotice(null), 4000);
+      }
+    });
+  };
+
   const send = async () => {
     if (streamingRef.current) return;
     const value = draft.trim();
-    if (!value) return;
+    const sentImages = images;
+    if (!value && sentImages.length === 0) return;
 
     setDraft("");
+    setImages([]);
     setNotice(null);
-    setStreamQuestion(value);
+    setStreamQuestion(value || (sentImages.length ? "[图片]" : ""));
     setStreamAnswer("");
     if (composerRef.current) composerRef.current.style.height = "auto";
     streamingRef.current = true;
+    pendingExchangeIdRef.current = null;
     setStreaming(true);
     try {
       const result = await sendMessage({
         text: value,
-        files: [],
+        files: sentImages,
         deepThink,
         webSearch,
         sessionId: currentId ?? "",
         injectPrompt: newSession || (bySession.get(currentId ?? "")?.length ?? 0) === 0,
         newSession,
       });
+      pendingExchangeIdRef.current = result.exchangeId;
       setNewSession(false);
       setCurrentId(result.sessionId);
       setExpanded((prev) => new Set(prev).add(result.sessionId));
@@ -312,7 +359,8 @@ export function MainWindow() {
     } catch (e) {
       streamingRef.current = false;
       setStreaming(false);
-      setNotice({ text: errText(e), kind: "error" });
+      setImages(sentImages);
+      setNotice({ text: errText(e), kind: "error", code: errKind(e) });
     }
   };
 
@@ -334,27 +382,27 @@ export function MainWindow() {
         </div>
         <div className="menu-right">
           <div className="menu-items">
-          <button
-            type="button"
-            className={`menu-item ${panel === "list" ? "is-active" : ""}`}
-            onClick={() => setPanel("list")}
-          >
-            会话
-          </button>
-          <button
-            type="button"
-            className={`menu-item ${panel === "settings" ? "is-active" : ""}`}
-            onClick={() => setPanel(panel === "settings" ? "list" : "settings")}
-          >
-            设置
-          </button>
-          <button
-            type="button"
-            className={`menu-item ${panel === "help" ? "is-active" : ""}`}
-            onClick={() => setPanel(panel === "help" ? "list" : "help")}
-          >
-            帮助
-          </button>
+            <button
+              type="button"
+              className={`menu-item ${panel === "list" ? "is-active" : ""}`}
+              onClick={() => setPanel("list")}
+            >
+              会话
+            </button>
+            <button
+              type="button"
+              className={`menu-item ${panel === "settings" ? "is-active" : ""}`}
+              onClick={() => setPanel(panel === "settings" ? "list" : "settings")}
+            >
+              设置
+            </button>
+            <button
+              type="button"
+              className={`menu-item ${panel === "help" ? "is-active" : ""}`}
+              onClick={() => setPanel(panel === "help" ? "list" : "help")}
+            >
+              帮助
+            </button>
           </div>
           <div className="win-controls">
             <button
@@ -427,7 +475,7 @@ export function MainWindow() {
                           setMenu({ x: e.clientX, y: e.clientY, kind: "exchange", exchangeId: hit.id });
                         }}
                       >
-                        <span className="sidebar-hit-q">{hit.questionText}</span>
+                        <span className="sidebar-hit-q">{questionLabel(hit)}</span>
                         <span className="sidebar-hit-meta">
                           {sessions.find((s) => s.id === hit.sessionId)?.title ?? "会话"} · {formatTime(hit.createdAt)}
                         </span>
@@ -473,9 +521,9 @@ export function MainWindow() {
                                     e.stopPropagation();
                                     setMenu({ x: e.clientX, y: e.clientY, kind: "exchange", exchangeId: ex.id });
                                   }}
-                                  title={ex.questionText}
+                                  title={questionLabel(ex)}
                                 >
-                                  {ex.questionText}
+                                  {questionLabel(ex)}
                                 </button>
                               ))}
                             </div>
@@ -518,10 +566,10 @@ export function MainWindow() {
                       {sessions.find((s) => s.id === selected.sessionId)?.title ?? "会话"}
                       {selected.sessionId === activeId && <span className="turn-context-active"> · 网页当前在此</span>}
                     </div>
-                    <div className="turn-question">{selected.questionText}</div>
+                    <div className="turn-question">{questionLabel(selected)}</div>
                     <div
                       className="turn-answer markdown"
-                      onClick={copyCode}
+                      onClick={onMarkdownClick}
                       dangerouslySetInnerHTML={{ __html: md.render(selected.answerText) }}
                     />
                   </div>
@@ -533,7 +581,21 @@ export function MainWindow() {
 
                 {notice && (
                   <div className={`detail-notice ${notice.kind === "ok" ? "is-ok" : "is-error"}`}>
-                    {notice.text}
+                    <span>{notice.text}</span>
+                    {notice.code === "loginRequired" && (
+                      <button
+                        type="button"
+                        className="detail-notice-action"
+                        onClick={() => {
+                          void invoke("open_login_window").then(
+                            () => setNotice(null),
+                            (e) => setNotice({ text: `打开登录窗口失败：${errText(e)}`, kind: "error" }),
+                          );
+                        }}
+                      >
+                        去登录
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -545,8 +607,28 @@ export function MainWindow() {
                     : `接续：${sessions.find((s) => s.id === activeId)?.title ?? "网页当前会话"}`}
                 </div>
               )}
-              <div className="detail-composer">
-                <textarea
+              <div className="detail-compose">
+                {images.length > 0 && (
+                  <div className="composer-image-row">
+                    {images.map((path) => (
+                      <div className="composer-image-tag" key={path}>
+                        <img src={convertFileSrc(path)} alt="" draggable={false} />
+                        <button
+                          type="button"
+                          className="composer-image-del"
+                          title="移除这张"
+                          onClick={() => setImages((prev) => prev.filter((p) => p !== path))}
+                        >
+                          <svg viewBox="0 0 24 24" width="8" height="8" aria-hidden="true">
+                            <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" fill="none" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="detail-composer">
+                  <textarea
                   ref={composerRef}
                   className="main-input"
                   rows={1}
@@ -556,6 +638,7 @@ export function MainWindow() {
                     setDraft(e.target.value);
                     autoGrow(e.target);
                   }}
+                  onPaste={handlePaste}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
@@ -616,6 +699,7 @@ export function MainWindow() {
                     </svg>
                   </button>
                 )}
+                </div>
               </div>
             </main>
           </>

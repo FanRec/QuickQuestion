@@ -7,6 +7,7 @@ import {
   activeSession,
   cancelMessage,
   copyMarkdown,
+  errKind,
   errText,
   getSettings,
   sendMessage,
@@ -19,6 +20,7 @@ import {
   onSettingsChanged,
   onStream,
 } from "../lib/events";
+import { hasImageFiles, savePastedImages } from "../lib/paste";
 import { showWindow } from "../lib/windows";
 import mascotFace from "../assets/mascot-face.png";
 import "./Composer.css";
@@ -42,6 +44,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
   const [text, setText] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<string | undefined>(undefined);
   const [streaming, setStreaming] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const [deepThink, setDeepThink] = useState(false);
@@ -63,10 +66,13 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
   const bodyRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<number | undefined>(undefined);
   const streamingRef = useRef(false);
+  // 后端事件是全局广播；只接收本实例这一轮的事件，避免旧轮结果串进来。
+  const pendingExchangeIdRef = useRef<string | null>(null);
   const dragRef = useRef({ x: 0, y: 0, moved: false });
 
   const bubbleShown = streaming || answer !== null || error !== null;
-  const needLogin = !!error && error.includes("登录");
+  // 只认结构化错误码：后端登录类错误统一带 loginRequired，不再靠文案猜。
+  const needLogin = errorKind === "loginRequired";
   // 发出请求但还没收到任何流式文本：显示骨架屏，比空白气泡友好。
   const pending = streaming && !answer;
 
@@ -147,6 +153,9 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     onStream((payload) => {
       // 只处理本实例发起的问答，避免两个实例互相污染。
       if (!streamingRef.current) return;
+      // 后端是全局广播：只认本轮 exchangeId，旧轮残留事件直接丢。
+      const mine = pendingExchangeIdRef.current;
+      if (!mine || payload.exchangeId !== mine) return;
       if (payload.type === "delta") {
         setAnswer(payload.text);
       } else if (payload.type === "done") {
@@ -162,6 +171,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
       } else {
         streamingRef.current = false;
         setError(payload.message);
+        setErrorKind(payload.kind);
         setStreaming(false);
       }
     }).then((fn) => {
@@ -192,25 +202,15 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     return () => window.clearTimeout(timer);
   }, [variant, popupHideSecs, wakeTick, text, images.length, streaming, bubbleShown, onClose]);
 
-  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const files = Array.from(items)
-      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-      .map((item) => item.getAsFile())
-      .filter((f): f is File => f !== null);
-    if (files.length === 0) return;
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    // 只认粘贴进来的图片；无图片走浏览器默认粘贴。
+    // preventDefault 必须在同步阶段调用，事件派发不会等 async handler。
+    if (!hasImageFiles(e.clipboardData)) return;
     e.preventDefault();
-    for (const file of files) {
-      const ext = file.type.split("/")[1] || "png";
-      try {
-        const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-        const path = await invoke<string>("save_temp_image", { bytes, ext });
-        setImages((prev) => [...prev, path]);
-      } catch (err) {
-        setError(`粘贴图片失败：${errText(err)}`);
-      }
-    }
+    void savePastedImages(e.clipboardData).then(({ paths, errors }) => {
+      setImages((prev) => [...prev, ...paths]);
+      if (errors.length > 0) setError(errors.join("\n"));
+    });
   };
 
   const submit = async () => {
@@ -219,9 +219,11 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     if (!value && images.length === 0) return;
     setAnswer("");
     setError(null);
+    setErrorKind(undefined);
     setExchangeId(null);
     streamingRef.current = true;
     setStreaming(true);
+    pendingExchangeIdRef.current = null;
     setText("");
     if (inputRef.current) {
       inputRef.current.style.height = "24px";
@@ -229,7 +231,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     const sentImages = images;
     setImages([]);
     try {
-      await sendMessage({
+      const result = await sendMessage({
         text: value,
         files: sentImages,
         deepThink,
@@ -238,10 +240,12 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
         injectPrompt: newSession,
         newSession,
       });
+      pendingExchangeIdRef.current = result.exchangeId;
       setNewSession(false);
     } catch (e) {
       streamingRef.current = false;
       setError(errText(e));
+      setErrorKind(errKind(e));
       setStreaming(false);
     }
   };
@@ -325,6 +329,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
               window.clearTimeout(hideTimer.current);
               setAnswer(null);
               setError(null);
+              setErrorKind(undefined);
             }}
           >
             <svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true">
@@ -338,7 +343,8 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
               onClick={async () => {
                 try {
                   await invoke("open_login_window");
-                  setError("已打开浏览器窗口，请完成登录后再发送。");
+                  setError("已打开浏览器窗口，请在 DeepSeek 页面完成登录后再发送。");
+                  setErrorKind(undefined);
                 } catch (e) {
                   setError(`打开登录窗口失败：${errText(e)}`);
                 }
@@ -401,7 +407,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
         </div>
       )}
       {newSession && (
-        <div className="composer-context composer-context--new">
+        <div className="composer-context">
           <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
             <path d="M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2z" fill="currentColor" />
           </svg>
@@ -424,7 +430,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
             setText(e.target.value);
             autoGrow(e.target);
           }}
-          onPaste={(e) => void handlePaste(e)}
+          onPaste={handlePaste}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();

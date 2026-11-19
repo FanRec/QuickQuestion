@@ -16,6 +16,10 @@ export interface Exchange {
   imageNames: string[];
 }
 
+/** 历史列表里的问题标题：纯图片提问没有文字，给一个可识别的占位。 */
+export const questionLabel = (e: Exchange) =>
+  e.questionText.trim() || (e.imageNames.length ? "[图片]" : "未命名问题");
+
 export function formatTime(ts: number): string {
   const d = new Date(ts);
   const now = new Date();

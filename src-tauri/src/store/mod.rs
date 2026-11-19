@@ -11,7 +11,8 @@ pub struct SqliteStore {
     conn: Mutex<Connection>,
 }
 
-fn now_ms() -> i64 {
+/// 当前 Unix 毫秒时间戳。数据库时间字段与命令层共用这一个来源。
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -210,7 +211,7 @@ impl SqliteStore {
             .map_err(|e| AppError::msg(format!("图片列表编码失败：{e}")))?;
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO exchanges (id, session_id, created_at, question_text, answer_text, image_names)
+            "INSERT INTO exchanges (id, session_id, created_at, question_text, answer_text, image_names)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 exchange.id,

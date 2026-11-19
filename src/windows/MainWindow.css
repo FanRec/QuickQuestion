@@ -446,7 +446,23 @@
   font-size: 13px;
   line-height: 1.5;
   user-select: text;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
+
+.detail-notice-action {
+  flex: none;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  background: transparent;
+  font: 400 12px/1.4 var(--font-sans);
+  cursor: pointer;
+}
+.detail-notice-action:hover { background: var(--surface-hover); }
 
 .detail-notice.is-error {
   background: var(--danger-soft);
@@ -473,12 +489,17 @@
   color: var(--accent);
 }
 
+.detail-compose {
+  flex: none;
+  margin: 0 16px 18px;
+}
+
 .detail-composer {
   flex: none;
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  margin: 0 16px 18px;
+  margin: 0;
   padding: 8px 8px 8px 16px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--separator);

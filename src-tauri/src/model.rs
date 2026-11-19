@@ -8,6 +8,10 @@ pub struct BrowserStatus {
     pub port: u16,
     pub page_url: String,
     pub input_ready: bool,
+    /// 是否需要登录；由 URL 与页面登录 UI 共同判定。
+    pub needs_login: bool,
+    /// 需要登录的原因（url / ui / emptyInput），仅用于诊断。
+    pub login_reason: String,
 }
 
 /// 一个会话：一次「新对话」从开始到结束之间的问答集合。

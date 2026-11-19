@@ -41,10 +41,3 @@ input:focus-visible,
 ::selection {
   background: var(--accent-soft);
 }
-
-.glass {
-  background: var(--surface);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  border: 0.5px solid var(--separator);
-}

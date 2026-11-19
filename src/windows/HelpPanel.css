@@ -113,19 +113,6 @@
   color: var(--text-secondary);
 }
 
-.help-code {
-  margin-top: 10px;
-  padding: 12px 14px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--separator);
-  background: var(--surface-sunken);
-  font-family: "SF Mono", "Cascadia Mono", Consolas, monospace;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-}
-
 kbd {
   display: inline-block;
   min-width: 20px;

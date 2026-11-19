@@ -19,8 +19,3 @@
 .icon-button:active {
   transform: scale(0.92);
 }
-
-.icon-button--accent:hover {
-  color: var(--accent);
-  background: var(--accent-soft);
-}

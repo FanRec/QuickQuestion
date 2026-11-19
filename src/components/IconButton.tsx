@@ -5,14 +5,13 @@ interface IconButtonProps {
   children: ReactNode;
   title?: string;
   onClick?: () => void;
-  variant?: "subtle" | "accent";
 }
 
-export function IconButton({ children, title, onClick, variant = "subtle" }: IconButtonProps) {
+export function IconButton({ children, title, onClick }: IconButtonProps) {
   return (
     <button
       type="button"
-      className={`icon-button icon-button--${variant}`}
+      className="icon-button"
       title={title}
       aria-label={title}
       onClick={onClick}

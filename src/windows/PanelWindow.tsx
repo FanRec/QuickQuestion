@@ -8,6 +8,7 @@ import { Composer } from "../components/Composer";
 import { copyMarkdown, deleteExchange, errText, isSending, listExchanges } from "../lib/api";
 import { emitSelect, onHotkeyInput, onRefresh } from "../lib/events";
 import type { Exchange } from "../lib/types";
+import { questionLabel } from "../lib/types";
 import mascot from "../assets/mascot.png";
 import {
   HISTORY_H,
@@ -289,8 +290,8 @@ export function PanelWindow() {
                       <path d="M13 3v6h6M8.5 13h7M8.5 16.5h4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" fill="none" />
                     </svg>
                     <div className="panel-history-text">
-                      <div className="panel-history-question" title={item.questionText}>
-                        {item.questionText}
+                      <div className="panel-history-question" title={questionLabel(item)}>
+                        {questionLabel(item)}
                       </div>
                       <div className="panel-history-time">
                         {group.label === "更早" ? dateOf(item.createdAt) : timeOf(item.createdAt)}

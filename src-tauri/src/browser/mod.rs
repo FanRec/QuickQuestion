@@ -104,18 +104,55 @@ async fn port_ready(port: u16) -> bool {
     }
 }
 
-/// 按优先级查找 Edge / Chrome 可执行文件。
+/// 按优先级查找 Edge / Chrome 可执行文件：
+/// Windows 看常规安装目录，macOS 找 App 包内二进制，Linux 沿 PATH 与常见目录探测。
 fn find_browser() -> Option<std::path::PathBuf> {
-    let local = dirs::data_local_dir()?;
-    let pf = std::env::var("ProgramFiles").unwrap_or_default();
-    let pf86 = std::env::var("ProgramFiles(x86)").unwrap_or_default();
-    let candidates = [
-        local.join("Microsoft/Edge/Application/msedge.exe"),
-        std::path::PathBuf::from(&pf).join("Microsoft/Edge/Application/msedge.exe"),
-        std::path::PathBuf::from(&pf86).join("Microsoft/Edge/Application/msedge.exe"),
-        local.join("Google/Chrome/Application/chrome.exe"),
-        std::path::PathBuf::from(&pf).join("Google/Chrome/Application/chrome.exe"),
-        std::path::PathBuf::from(&pf86).join("Google/Chrome/Application/chrome.exe"),
-    ];
+    let candidates: Vec<std::path::PathBuf> = if cfg!(target_os = "windows") {
+        let local = dirs::data_local_dir()?;
+        let pf = std::env::var("ProgramFiles").unwrap_or_default();
+        let pf86 = std::env::var("ProgramFiles(x86)").unwrap_or_default();
+        let roots = [
+            local,
+            std::path::PathBuf::from(pf),
+            std::path::PathBuf::from(pf86),
+        ];
+        let files = [
+            "Microsoft/Edge/Application/msedge.exe",
+            "Google/Chrome/Application/chrome.exe",
+        ];
+        roots
+            .iter()
+            .flat_map(|root| files.iter().map(move |f| root.join(f)))
+            .collect()
+    } else if cfg!(target_os = "macos") {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let roots = ["/Applications".to_string(), format!("{home}/Applications")];
+        let apps = ["Microsoft Edge", "Google Chrome", "Chromium"];
+        roots
+            .iter()
+            .flat_map(|root| {
+                apps.iter().map(move |app| {
+                    std::path::PathBuf::from(format!("{root}/{app}.app/Contents/MacOS/{app}"))
+                })
+            })
+            .collect()
+    } else {
+        let names = [
+            "microsoft-edge",
+            "microsoft-edge-stable",
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+        ];
+        let mut search_dirs: Vec<std::path::PathBuf> =
+            std::env::split_paths(&std::env::var("PATH").unwrap_or_default()).collect();
+        search_dirs.push(std::path::PathBuf::from("/usr/local/bin"));
+        search_dirs.push(std::path::PathBuf::from("/snap/bin"));
+        names
+            .iter()
+            .flat_map(|name| search_dirs.iter().map(move |dir| dir.join(name)))
+            .collect()
+    };
     candidates.into_iter().find(|p| p.exists())
 }

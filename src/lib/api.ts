@@ -19,7 +19,7 @@ export function sendMessage(input: {
   return invoke<SendResult>("send_message", input);
 }
 
-/// 后端错误是 `{ message }` 结构，直接 String() 会变成 "[object Object]"。
+/// 后端错误是 `{ message, kind? }` 结构；kind 决定 UI 行为（如登录引导）。
 export function errText(error: unknown): string {
   if (typeof error === "string") return error;
   if (error && typeof error === "object") {
@@ -32,6 +32,14 @@ export function errText(error: unknown): string {
     }
   }
   return String(error);
+}
+
+export function errKind(error: unknown): string | undefined {
+  if (error && typeof error === "object") {
+    const kind = (error as { kind?: unknown }).kind;
+    if (typeof kind === "string") return kind;
+  }
+  return undefined;
 }
 
 export function listExchanges(sessionId?: string): Promise<Exchange[]> {
@@ -86,6 +94,8 @@ export function browserStatus(): Promise<{
   port: number;
   pageUrl: string;
   inputReady: boolean;
+  needsLogin: boolean;
+  loginReason: string;
 }> {
   return invoke("browser_status");
 }

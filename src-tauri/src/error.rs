@@ -5,13 +5,31 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub struct AppError {
     pub message: String,
+    /// 结构化错误码：前端据此决定行为（如弹登录引导），不再靠中文文案猜。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 impl AppError {
     pub fn msg<S: Into<String>>(message: S) -> Self {
         Self {
             message: message.into(),
+            kind: None,
         }
+    }
+
+    pub fn with_kind<S: Into<String>, K: Into<String>>(message: S, kind: K) -> Self {
+        Self {
+            message: message.into(),
+            kind: Some(kind.into()),
+        }
+    }
+
+    pub fn login_required() -> Self {
+        Self::with_kind(
+            "DeepSeek 尚未登录，请点击下方“去登录”完成登录后再发送。",
+            "loginRequired",
+        )
     }
 }
 

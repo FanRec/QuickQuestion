@@ -2,6 +2,7 @@
 name = "quickquestion"
 version = "0.1.0"
 description = "QuickQuestion - desktop floating AI Q&A"
+license = "MIT"
 authors = ["KongJi"]
 edition = "2021"
 
@@ -22,7 +23,7 @@ futures-util = "0.3"
 reqwest = { version = "0.13", features = ["json"] }
 uuid = { version = "1", features = ["v4"] }
 dirs = "7"
-tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
+tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 rusqlite = { version = "0.37", features = ["bundled"] }

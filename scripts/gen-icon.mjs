@@ -1,5 +1,6 @@
 import { deflateSync } from "node:zlib";
 import { writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const SIZE = 1024;
 const SS = 2;
@@ -86,5 +87,7 @@ const png = Buffer.concat([
   chunk("IEND", Buffer.alloc(0)),
 ]);
 
-writeFileSync("E:/LittleTools/QuickQuestion/src-tauri/icons/icon.png", png);
-console.log("icon.png written:", png.length, "bytes");
+// 输出到本仓库的图标目录，与脚本位置绑定，任何机器上可直接运行。
+const out = fileURLToPath(new URL("../src-tauri/icons/icon.png", import.meta.url));
+writeFileSync(out, png);
+console.log("icon.png written:", out, png.length, "bytes");

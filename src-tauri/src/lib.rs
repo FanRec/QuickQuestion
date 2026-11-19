@@ -72,8 +72,8 @@ impl AppState {
 pub fn run() {
     let state = Arc::new(AppState::new().expect("初始化数据库失败"));
     tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(state)
         .setup(|app| {
             setup_tray(app)?;

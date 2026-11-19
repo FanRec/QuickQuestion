@@ -30,7 +30,7 @@ fn parse_chat_id(url: &str) -> String {
 pub enum StreamEvent {
     Delta { text: String },
     Done { text: String },
-    Error { message: String },
+    Error { message: String, kind: Option<String> },
 }
 
 /// 输入框探测 JS：多候选 + 可见性判定，页面结构变化时仍有机会命中。
@@ -54,37 +54,138 @@ const FIND_INPUT_JS: &str = r#"
 })()
 "#;
 
-/// 读取最后一条助手回复，并尽量还原成 Markdown。
-/// 关键在于公式：网页里已经是 KaTeX 渲染后的 DOM，innerText 会把分子分母、上下标
-/// 拆成独立行；必须从 annotation 里取回原始 LaTeX，才能在前端正确重渲。
-const LAST_REPLY_JS: &str = r#"
+/// 登录态探测：URL + 可见登录 UI + 输入框缺失三类信号，返回结构化原因。
+const LOGIN_STATE_JS: &str = r#"
 (function () {
-  var sel = '.ds-assistant-message-main-content, [class*="ds-assistant-message-main-content"]';
-  var list = document.querySelectorAll(sel);
-  if (!list.length) return JSON.stringify({ count: 0, text: '' });
-  var box = list[list.length - 1].cloneNode(true);
+  function visible(el) {
+    if (!el) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width < 8 || r.height < 8) return false;
+    var cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0';
+  }
+  var url = location.href;
+  var reason = '';
+  if (/sign_in|login/.test(url)) reason = 'url';
 
-  // 回复容器里混着网页 UI：引用角标（opacity:0 的 "-" + 数字）和代码块头部
-  // （语言名 + 复制/下载按钮）。innerText 会把它们当正文收进去，序列化前删掉子树。
-  box.querySelectorAll('[data-citation-group], .ds-markdown-cite').forEach(function (el) { el.remove(); });
-  box.querySelectorAll('.md-code-block-banner-wrap').forEach(function (el) { el.remove(); });
+  if (!reason) {
+    var nodes = document.querySelectorAll('button,[role="button"],a');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (!visible(el)) continue;
+      var t = ((el.innerText || el.textContent || '') + ' ' +
+        (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('title') || '')).trim();
+      if (/^(登录|立即登录|扫码登录|手机号登录|验证码登录|Sign in|Log in)$/i.test(t)) {
+        reason = 'ui';
+        break;
+      }
+    }
+  }
+
+  var input = null;
+  var groups = ['textarea', '[contenteditable="true"]', '[role="textbox"]'];
+  for (var g = 0; g < groups.length && !input; g++) {
+    var list = document.querySelectorAll(groups[g]);
+    for (var k = 0; k < list.length; k++) {
+      if (!list[k].disabled && visible(list[k])) { input = list[k]; break; }
+    }
+  }
+  var inputReady = !!input;
+  if (!reason && !inputReady && /登录|log\s*in/i.test(document.body.innerText || '')) reason = 'emptyInput';
+
+  return JSON.stringify({
+    needsLogin: !!reason,
+    reason: reason,
+    pageUrl: url,
+    inputReady: inputReady
+  });
+})()
+"#;
+
+fn mark_reply_js(msg_json: &str) -> String {
+    format!(
+        r#"
+(function () {{
+  window.__qqSentText = {msg_json};
+  var list = document.querySelectorAll('.ds-message');
+  for (var i = 0; i < list.length; i++) list[i].setAttribute('data-qq-prev', '1');
+  return String(list.length);
+}})()
+"#,
+        msg_json = msg_json
+    )
+}
+
+/// 读取本轮新回复，并附带网页自身的"是否仍在生成"状态。
+/// 公式仍从 annotation 取回原始 LaTeX；网页 UI 噪声（引用角标、代码块头）在克隆节点上删掉。
+const READ_REPLY_JS: &str = r#"
+(function () {
+  function generatingNow() {
+    var btn = document.querySelector('[role="button"].ds-button--circle.ds-button--primary');
+    if (btn && !btn.classList.contains('ds-button--disabled')) return true;
+    var leaves = document.querySelectorAll('span,div');
+    for (var i = 0; i < leaves.length; i++) {
+      var el = leaves[i];
+      if (el.children.length) continue;
+      var t = (el.textContent || '').trim();
+      if (/^(正在思考|搜索中|正在搜索|正在生成|正在查找|正在浏览网页|Thinking|Searching)/.test(t)) return true;
+    }
+    return false;
+  }
+
+  // 身份锚点：刚发出的用户消息没打标，且文本与 window.__qqSentText 一致；
+  // 它的下一个 .ds-message 才是本轮助手回复。只靠"最后一个未打标"不够，
+  // 联网阶段旧消息懒加载时也会变成未打标。
+  var box = null;
+  var list = document.querySelectorAll('.ds-message');
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].hasAttribute('data-qq-prev')) continue;
+    var t = (list[i].innerText || '').trim();
+    if (window.__qqSentText && t.indexOf(window.__qqSentText) >= 0) {
+      var n = list[i].nextElementSibling;
+      while (n && !n.querySelector('.ds-assistant-message-main-content')) n = n.nextElementSibling;
+      if (n) box = n;
+      break;
+    }
+  }
+  // 图片提问等文本为空的场景：退回最后一个未打标的助手消息。
+  if (!box) {
+    for (var k = list.length - 1; k >= 0; k--) {
+      if (!list[k].hasAttribute('data-qq-prev') && list[k].querySelector('.ds-assistant-message-main-content')) {
+        box = list[k];
+        break;
+      }
+    }
+  }
+  if (!box) return JSON.stringify({ found: false, text: '', generating: generatingNow() });
+
+  // 网页在回复末尾显示的免责声明是比静默更可靠的完成标记（避开 hash class）。
+  var doneMark = false;
+  var divs = box.querySelectorAll('div');
+  for (var j = 0; j < divs.length; j++) {
+    if ((divs[j].textContent || '').indexOf('本回答由 AI 生成') >= 0) { doneMark = true; break; }
+  }
+  var generating = generatingNow() && !doneMark;
+
+  var content = box.querySelector('.ds-assistant-message-main-content').cloneNode(true);
+  content.querySelectorAll('[data-citation-group], .ds-markdown-cite').forEach(function (el) { el.remove(); });
+  content.querySelectorAll('.md-code-block-banner-wrap').forEach(function (el) { el.remove(); });
 
   function texOf(el) {
     var a = el.querySelector('annotation[encoding="application/x-tex"]');
     return a ? a.textContent : '';
   }
-  box.querySelectorAll('.katex-display').forEach(function (el) {
+  content.querySelectorAll('.katex-display').forEach(function (el) {
     var t = texOf(el);
     el.replaceWith(document.createTextNode(t ? '\n\n$$' + t + '$$\n\n' : ''));
   });
-  box.querySelectorAll('.katex').forEach(function (el) {
+  content.querySelectorAll('.katex').forEach(function (el) {
     var t = texOf(el);
     el.replaceWith(document.createTextNode(t ? '$' + t + '$' : ''));
   });
-  // 没取到 LaTeX 的渲染层直接丢弃，避免同样的字符出现两遍。
-  box.querySelectorAll('.katex-html, .katex-mathml').forEach(function (el) { el.remove(); });
+  content.querySelectorAll('.katex-html, .katex-mathml').forEach(function (el) { el.remove(); });
 
-  box.querySelectorAll('pre').forEach(function (pre) {
+  content.querySelectorAll('pre').forEach(function (pre) {
     var code = pre.querySelector('code');
     var lang = '';
     if (code) {
@@ -96,26 +197,24 @@ const LAST_REPLY_JS: &str = r#"
   });
 
   ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].forEach(function (tag, i) {
-    box.querySelectorAll(tag).forEach(function (el) {
+    content.querySelectorAll(tag).forEach(function (el) {
       var hashes = new Array(i + 2).join('#');
       el.replaceWith(document.createTextNode('\n' + hashes + ' ' + (el.innerText || '').trim() + '\n'));
     });
   });
-
-  box.querySelectorAll('li').forEach(function (li) {
+  content.querySelectorAll('li').forEach(function (li) {
     li.replaceWith(document.createTextNode('\n- ' + (li.innerText || '').trim()));
   });
-
-  box.querySelectorAll('strong, b').forEach(function (el) {
+  content.querySelectorAll('strong, b').forEach(function (el) {
     el.replaceWith(document.createTextNode('**' + (el.innerText || '') + '**'));
   });
-  box.querySelectorAll('code').forEach(function (el) {
+  content.querySelectorAll('code').forEach(function (el) {
     if (el.closest('pre')) return;
     el.replaceWith(document.createTextNode('`' + (el.innerText || '') + '`'));
   });
 
-  var text = (box.innerText || box.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
-  return JSON.stringify({ count: list.length, text: text });
+  var text = (content.innerText || content.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+  return JSON.stringify({ found: true, text: text, generating: generating });
 })()
 "#;
 
@@ -323,6 +422,18 @@ impl CdpClient {
         Ok(raw.trim() == "true")
     }
 
+    /// 结构化登录态：前端据此弹引导，不再靠错误文案猜。
+    pub async fn login_state(&self) -> Result<(bool, String, String, bool), AppError> {
+        let raw = self.evaluate(LOGIN_STATE_JS).await?;
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
+        Ok((
+            value.get("needsLogin").and_then(Value::as_bool).unwrap_or(false),
+            value.get("reason").and_then(Value::as_str).unwrap_or("").to_string(),
+            value.get("pageUrl").and_then(Value::as_str).unwrap_or("").to_string(),
+            value.get("inputReady").and_then(Value::as_bool).unwrap_or(false),
+        ))
+    }
+
     /// 为本轮问答安装新的订阅者，返回接收端。旧订阅者被替换（上一轮应已结束）。
     pub async fn subscribe(&self) -> mpsc::UnboundedReceiver<StreamEvent> {
         let (tx, rx) = mpsc::unbounded_channel::<StreamEvent>();
@@ -389,39 +500,54 @@ impl CdpClient {
         Ok(parse_chat_id(&url))
     }
 
-    /// 把浏览器窗口移到屏幕中央并显示，供用户完成登录。
-    /// 平时窗口被放在屏幕外，登录场景必须让它可见。
+    /// 把浏览器窗口移到屏幕中央、切到登录页并激活，供用户完成登录。
+    /// 平时窗口被放在屏幕外，登录场景必须让它可见且获得焦点。
     pub async fn show_browser_window(&self) -> Result<(), AppError> {
-        let url = format!("http://127.0.0.1:{}/json/list", self.port);
-        let list: Vec<Value> = reqwest::Client::builder()
-            .timeout(Duration::from_secs(3))
-            .build()
-            .map_err(|e| AppError::msg(format!("HTTP 客户端初始化失败：{e}")))?
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| AppError::msg(format!("读取浏览器页面失败：{e}")))?
-            .json()
-            .await
-            .map_err(|e| AppError::msg(format!("解析页面列表失败：{e}")))?;
+        // 当前 CDP 连接就绑定在 DeepSeek 页面；若未登录但还停在聊天页，直接切登录页。
+        if let Ok((needs_login, _, page_url, _)) = self.login_state().await {
+            if needs_login && !(page_url.contains("sign_in") || page_url.contains("login")) {
+                let _ = self
+                    .call(
+                        "Page.navigate",
+                        json!({ "url": "https://chat.deepseek.com/sign_in" }),
+                    )
+                    .await;
+                tokio::time::sleep(Duration::from_millis(600)).await;
+            }
+        }
 
-        let page = list
-            .iter()
-            .find(|p| {
-                p.get("url")
-                    .and_then(Value::as_str)
-                    .is_some_and(|u| u.contains("deepseek"))
-            })
-            .ok_or_else(|| AppError::msg("未找到 DeepSeek 页面，请稍后重试。".to_string()))?;
-        let target_id = page
-            .get("id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| AppError::msg("未取到页面标识。".to_string()))?
-            .to_string();
-
-        let window = self
-            .call("Browser.getWindowForTarget", json!({ "targetId": target_id }))
-            .await?;
+        let window = match self.call("Browser.getWindowForTarget", json!({})).await {
+            Ok(v) => v,
+            Err(_) => {
+                // 旧版 CDP 要求显式 targetId 时再走页面列表（兼容性兜底）。
+                let url = format!("http://127.0.0.1:{}/json/list", self.port);
+                let list: Vec<Value> = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(3))
+                    .build()
+                    .map_err(|e| AppError::msg(format!("HTTP 客户端初始化失败：{e}")))?
+                    .get(&url)
+                    .send()
+                    .await
+                    .map_err(|e| AppError::msg(format!("读取浏览器页面失败：{e}")))?
+                    .json()
+                    .await
+                    .map_err(|e| AppError::msg(format!("解析页面列表失败：{e}")))?;
+                let target_id = list
+                    .iter()
+                    .find(|p| {
+                        p.get("url")
+                            .and_then(Value::as_str)
+                            .is_some_and(|u| u.contains("deepseek"))
+                    })
+                    .and_then(|p| p.get("id").and_then(Value::as_str))
+                    .ok_or_else(|| {
+                        AppError::msg("未找到 DeepSeek 页面，请稍后重试。".to_string())
+                    })?
+                    .to_string();
+                self.call("Browser.getWindowForTarget", json!({ "targetId": target_id }))
+                    .await?
+            }
+        };
         let window_id = window
             .get("windowId")
             .and_then(Value::as_i64)
@@ -452,6 +578,10 @@ impl CdpClient {
             }),
         )
         .await?;
+
+        // 只移动边界还不够：Windows 上窗口可能仍在其它窗口后面。
+        // Page.bringToFront 才真正激活标签页/窗口（实测 document.hasFocus() 变 true）。
+        self.call("Page.bringToFront", json!({})).await?;
         Ok(())
     }
 
@@ -544,27 +674,30 @@ impl CdpClient {
         Ok(())
     }
 
-    /// 读取当前最后一条回复的 Markdown 文本（每次全新查询，不受页面导航影响）。
-    pub async fn read_reply(&self) -> Result<(usize, String), AppError> {
-        let raw = self.evaluate(LAST_REPLY_JS).await?;
+    async fn read_reply(&self) -> Result<(bool, String, bool), AppError> {
+        let raw = self.evaluate(READ_REPLY_JS).await?;
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
-        let count = value.get("count").and_then(Value::as_u64).unwrap_or(0) as usize;
-        let text = value.get("text").and_then(Value::as_str).unwrap_or("").to_string();
-        Ok((count, text))
+        Ok((
+            value.get("found").and_then(Value::as_bool).unwrap_or(false),
+            value.get("text").and_then(Value::as_str).unwrap_or("").to_string(),
+            value.get("generating").and_then(Value::as_bool).unwrap_or(false),
+        ))
     }
 
-    /// 写入文字并发送，返回发送前的回复快照 (条数, 文本)。
-    /// 快照交给 spawn_reply_poller 判断"哪条是新回复"，避免误认上一轮内容。
+    /// 写入文字并发送。发送前给现有消息打标，后续只认未打标的新消息。
     pub async fn send_message(
         self: &Arc<Self>,
         text: &str,
         files: &[String],
-    ) -> Result<(usize, String), AppError> {
-        let url = self.current_url().await.unwrap_or_default();
-        if url.contains("sign_in") || url.contains("login") {
-            return Err(AppError::msg("DeepSeek 尚未登录，请先在浏览器中完成登录。"));
+    ) -> Result<(), AppError> {
+        let (needs_login, _reason, _page_url, input_ready) = self
+            .login_state()
+            .await
+            .unwrap_or((false, String::new(), String::new(), false));
+        if needs_login {
+            return Err(AppError::login_required());
         }
-        if !self.input_ready().await? {
+        if !input_ready {
             return Err(AppError::msg("未找到 DeepSeek 输入框，页面结构可能已变化。"));
         }
         if self.captcha_present().await {
@@ -580,8 +713,8 @@ impl CdpClient {
             return Err(AppError::msg("无法写入 DeepSeek 输入框。"));
         }
 
-        // 发送前快照：新回复必须与之不同（条数变化或文本变化）才算数。
-        let before = self.read_reply().await.unwrap_or((0, String::new()));
+        // 给现有消息打标，并记录刚发出的文本作为新回复的身份锚点。
+        let _ = self.evaluate(&mark_reply_js(&msg_json)).await?;
 
         self.evaluate(
             r#"(function(){
@@ -597,7 +730,7 @@ impl CdpClient {
             })()"#,
         )
         .await?;
-        Ok(before)
+        Ok(())
     }
 
     /// 结束本轮：取出并清空订阅者，投递最终事件。
@@ -608,13 +741,12 @@ impl CdpClient {
         }
     }
 
-    /// Rust 侧轮询回复并推送事件：每次全新 JS 查询，页面导航不影响。
-    /// before 为发送前快照，用于识别"本轮新回复"，避免把上一轮内容当结果。
-    pub fn spawn_reply_poller(self: Arc<Self>, before: (usize, String), quiet_ms: u64) {
+    /// Rust 侧轮询回复并推送事件。新回复靠"未打标"识别，完成靠网页停止生成判定：
+    /// 静默只用于确认文本不再变化，不再单独作为完成依据（思考/联网会长时间静默）。
+    pub fn spawn_reply_poller(self: Arc<Self>, quiet_ms: u64) {
         tokio::spawn(async move {
             let deadline = std::time::Instant::now() + Duration::from_secs(180);
-            let mut last = before.1.clone();
-            let mut saw_new = false;
+            let mut last = String::new();
             let mut stable_ms: u64 = 0;
             let tick = Duration::from_millis(250);
             // 发送触发 SPA 导航到会话页，先给页面一点时间稳定再读取。
@@ -624,6 +756,7 @@ impl CdpClient {
                 if !self.alive.load(Ordering::SeqCst) {
                     self.finish(StreamEvent::Error {
                         message: "浏览器连接已断开，请重试。".to_string(),
+                        kind: None,
                     })
                     .await;
                     return;
@@ -631,40 +764,55 @@ impl CdpClient {
                 if self.cancelled.load(Ordering::SeqCst) {
                     self.finish(StreamEvent::Error {
                         message: "已取消".to_string(),
+                        kind: None,
                     })
                     .await;
                     return;
                 }
                 tokio::time::sleep(tick).await;
-                let (count, text) = match self.read_reply().await {
+                let (found, text, generating) = match self.read_reply().await {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-                if text.is_empty() {
+                // 新消息节点还没渲染（思考/搜索阶段正文为空），继续等。
+                // 只在此时探测登录态：会话过期跳登录页时回复框必然消失，
+                // 没必要每个 tick 都对全页做 innerText 扫描（会强制浏览器重排）。
+                if !found {
+                    if let Ok((needs_login, _, _, _)) = self.login_state().await {
+                        if needs_login {
+                            self.finish(StreamEvent::Error {
+                                message: "DeepSeek 登录状态已失效，请重新登录。".to_string(),
+                                kind: Some("loginRequired".to_string()),
+                            })
+                            .await;
+                            return;
+                        }
+                    }
                     continue;
                 }
-                // 条数相对快照变化（新增或新会话重置），或文本被改写，都算本轮新回复。
-                if count != before.0 || text != before.1 {
-                    saw_new = true;
-                }
-                if saw_new && text != last {
+                if text != last {
                     // 增量到达：推送完整文本，前端做替换（简单可靠）。
                     if let Some(tx) = self.subscriber.lock().await.as_ref() {
                         let _ = tx.send(StreamEvent::Delta { text: text.clone() });
                     }
                     stable_ms = 0;
-                } else if saw_new {
+                } else {
                     stable_ms += tick.as_millis() as u64;
                 }
                 last = text.clone();
 
-                if saw_new && stable_ms >= quiet_ms {
+                if text.is_empty() {
+                    continue;
+                }
+                // 关键：网页仍在生成时绝不结束，哪怕文本暂时稳定。
+                if !generating && stable_ms >= quiet_ms {
                     self.finish(StreamEvent::Done { text }).await;
                     return;
                 }
             }
             self.finish(StreamEvent::Error {
                 message: "等待 DeepSeek 回复超时。".to_string(),
+                kind: None,
             })
             .await;
         });

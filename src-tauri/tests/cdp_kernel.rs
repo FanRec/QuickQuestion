@@ -47,12 +47,12 @@ async fn send_message_streams_delta_then_done() {
 
     let mut rx = client.subscribe().await;
     client.reset_cancel();
-    let before = client
+    client
         .send_message("请只回复两个字：收到", &[])
         .await
         .expect("应能发送消息");
     // Rust 侧轮询任务推送 delta/done 到同一通道。
-    client.clone().spawn_reply_poller(before, 900);
+    client.clone().spawn_reply_poller(900);
 
     let mut delta_count = 0;
     let mut final_text = String::new();
@@ -70,7 +70,7 @@ async fn send_message_streams_delta_then_done() {
                     done = true;
                     break;
                 }
-                StreamEvent::Error { message } => {
+                StreamEvent::Error { message, .. } => {
                     panic!("流式错误：{message}");
                 }
             }

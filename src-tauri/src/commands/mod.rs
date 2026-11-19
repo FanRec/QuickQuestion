@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
@@ -22,11 +21,17 @@ pub async fn browser_status(state: State<'_, Arc<AppState>>) -> Result<BrowserSt
     let cdp = state.ensure_cdp().await?;
     let page_url = cdp.current_url().await.unwrap_or_default();
     let input_ready = cdp.input_ready().await.unwrap_or(false);
+    let (needs_login, login_reason, _, _) = cdp
+        .login_state()
+        .await
+        .unwrap_or((false, String::new(), String::new(), false));
     Ok(BrowserStatus {
         ready: true,
         port: state.browser.port(),
         page_url,
         input_ready,
+        needs_login,
+        login_reason,
     })
 }
 
@@ -96,6 +101,9 @@ async fn send_inner(
     new_session: bool,
 ) -> Result<SendResult, AppError> {
     let cdp = state.ensure_cdp().await?;
+    // 设置整轮只读一次：quiet_ms / system_prompt / last_session_id 同源，
+    // 避免发送过程中多次读盘拿到不一致的快照。
+    let settings = state.config.load();
 
     // 会话决策：new_session 或没有可用绑定时，都新建本地会话。
     let existing = if new_session {
@@ -103,55 +111,73 @@ async fn send_inner(
     } else {
         state.store.find_session(&session_id)?
     };
+    // Some(会话id) 表示本轮新建了会话；发送失败要回滚，避免留下空会话。
+    let mut new_session_id: Option<String> = None;
     let chosen = if let Some(s) = existing.filter(|s| !s.deepseek_chat_id.is_empty()) {
         // 只有已绑定网页会话的本地会话才能接续；否则继续走新建分支，
         // 避免把两个不同网页会话的问答混进同一个本地会话。
         s
     } else {
-        let settings = state.config.load();
         let s = state.store.create_session("新会话")?;
-        // 记住这次会话，供下次启动恢复。
-        let mut updated = settings;
-        updated.last_session_id = s.id.clone();
-        state.config.save(&updated)?;
+        new_session_id = Some(s.id.clone());
         s
     };
 
-    // 网页切到目标会话：有绑定则接续，否则开全新对话。
-    if chosen.deepseek_chat_id.is_empty() {
-        cdp.new_conversation().await?;
-    } else {
-        cdp.navigate_to_chat(&chosen.deepseek_chat_id).await?;
-    }
-
-    // 模式开关必须在导航之后同步——导航会重建 DOM，之前点的开关状态会丢。
-    cdp.apply_modes(deep_think, web_search).await?;
-    // 先订阅再发送，避免事件在订阅之前到达而丢失。
-    let mut rx = cdp.subscribe().await;
-
     let id = Uuid::new_v4().to_string();
     let exchange_id = id.clone();
-    let quiet_ms = state.config.load().quiet_ms;
+    let quiet_ms = settings.quiet_ms;
 
     // 会话首条问答才注入长期设定；新建的会话总是首条。
-    let system_prompt = state.config.load().system_prompt;
-    let outgoing = if inject_prompt && !system_prompt.trim().is_empty() {
+    let outgoing = if inject_prompt && !settings.system_prompt.trim().is_empty() {
         format!(
             "[长期设定]\n{}\n[/长期设定]\n\n{}",
-            system_prompt.trim(),
+            settings.system_prompt.trim(),
             text
         )
     } else {
         text.clone()
     };
 
-    cdp.reset_cancel();
-    let before = cdp.send_message(&outgoing, &files).await?;
+    // 网页切换到发送这一段的任何失败都不能留下空会话。
+    let sent = async {
+        // 网页切到目标会话：有绑定则接续，否则开全新对话。
+        if chosen.deepseek_chat_id.is_empty() {
+            cdp.new_conversation().await?;
+        } else {
+            cdp.navigate_to_chat(&chosen.deepseek_chat_id).await?;
+        }
+
+        // 模式开关必须在导航之后同步——导航会重建 DOM，之前点的开关状态会丢。
+        cdp.apply_modes(deep_think, web_search).await?;
+        // 先订阅再发送，避免事件在订阅之前到达而丢失。
+        let rx = cdp.subscribe().await;
+        cdp.reset_cancel();
+        cdp.send_message(&outgoing, &files).await?;
+        Ok(rx)
+    }
+    .await;
+
+    let mut rx = match sent {
+        Ok(rx) => rx,
+        Err(e) => {
+            if let Some(sid) = &new_session_id {
+                let _ = state.store.delete_session(sid);
+            }
+            return Err(e);
+        }
+    };
+
+    // 发送成功才把新会话设为启动恢复点；失败时不覆盖用户原有的恢复点。
+    if let Some(sid) = &new_session_id {
+        let mut updated = settings.clone();
+        updated.last_session_id = sid.clone();
+        state.config.save(&updated)?;
+    }
 
     let app_for_task = app.clone();
     let state_for_task = state.clone();
     let cdp_for_task = cdp.clone();
-    cdp.clone().spawn_reply_poller(before, quiet_ms);
+    cdp.clone().spawn_reply_poller(quiet_ms);
     let question_text = text.clone();
     let session_for_task = chosen.id.clone();
     let image_names = files
@@ -175,10 +201,7 @@ async fn send_inner(
                 }
                 StreamEvent::Done { text } => {
                     let answer = text;
-                    let created_at = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .map(|d| d.as_millis() as i64)
-                        .unwrap_or(0);
+                    let created_at = crate::store::now_ms();
                     if let Err(e) = state_for_task.store.add(&Exchange {
                         id: exchange_id.clone(),
                         session_id: session_for_task.clone(),
@@ -219,15 +242,16 @@ async fn send_inner(
                     cdp_for_task.unsubscribe().await;
                     break;
                 }
-                StreamEvent::Error { message } => {
-                    let _ = app_for_task.emit(
-                        "qq://stream",
-                        serde_json::json!({
-                            "type": "error",
-                            "exchangeId": exchange_id,
-                            "message": message,
-                        }),
-                    );
+                StreamEvent::Error { message, kind } => {
+                    let mut payload = serde_json::json!({
+                        "type": "error",
+                        "exchangeId": exchange_id,
+                        "message": message,
+                    });
+                    if let Some(kind) = kind {
+                        payload["kind"] = serde_json::json!(kind);
+                    }
+                    let _ = app_for_task.emit("qq://stream", payload);
                     cdp_for_task.unsubscribe().await;
                     break;
                 }

@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import { browserStatus, errText, getSettings, updateSettings, type Settings } from "../lib/api";
 import { applyTheme, loadTheme, type ThemeMode } from "../lib/theme";
@@ -45,8 +46,12 @@ export function SettingsPanel() {
   const checkLogin = async () => {
     try {
       const status = await browserStatus();
-      const loggedIn = !status.pageUrl.includes("sign_in") && status.inputReady;
-      setLoginInfo(loggedIn ? "已登录，可以提问" : "未登录，请在浏览器中登录后重试");
+      const loggedIn = !status.needsLogin && status.inputReady;
+      setLoginInfo(
+        loggedIn
+          ? "已登录，可以提问"
+          : `未登录，请点击下方按钮打开浏览器完成登录（${status.loginReason || "状态未知"}）`,
+      );
     } catch (e) {
       setLoginInfo(`检测失败：${errText(e)}`);
     }
@@ -113,6 +118,18 @@ export function SettingsPanel() {
             <div className="login-check">
               <button type="button" className="settings-button" onClick={() => void checkLogin()}>
                 检测登录状态
+              </button>
+              <button
+                type="button"
+                className="settings-button"
+                onClick={() => {
+                  void invoke("open_login_window").then(
+                    () => setLoginInfo("已打开浏览器窗口，请在 DeepSeek 页面完成登录。"),
+                    (e) => setLoginInfo(`打开登录窗口失败：${errText(e)}`),
+                  );
+                }}
+              >
+                打开登录窗口
               </button>
               <span className="settings-hint">{loginInfo}</span>
             </div>
