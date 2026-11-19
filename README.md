@@ -21,6 +21,14 @@
 - **富文本复制**：渲染后的 HTML 进剪贴板，Snipaste 等贴图工具可直接贴成图片。
 - **隐私**：问答与设置全部落在 `%APPDATA%` / `%LOCALAPPDATA%` 本机目录，不上传任何数据。
 
+## 界面预览
+
+| 悬浮球问答 | 历史记录 |
+| --- | --- |
+| ![悬浮球问答](docs/images/orb-qa.png) | ![历史记录](docs/images/history.png) |
+
+![主窗口](docs/images/main-window.png)
+
 ## 环境要求
 
 - Windows 10/11
