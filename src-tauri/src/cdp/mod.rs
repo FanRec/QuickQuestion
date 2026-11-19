@@ -64,6 +64,11 @@ const LAST_REPLY_JS: &str = r#"
   if (!list.length) return JSON.stringify({ count: 0, text: '' });
   var box = list[list.length - 1].cloneNode(true);
 
+  // 回复容器里混着网页 UI：引用角标（opacity:0 的 "-" + 数字）和代码块头部
+  // （语言名 + 复制/下载按钮）。innerText 会把它们当正文收进去，序列化前删掉子树。
+  box.querySelectorAll('[data-citation-group], .ds-markdown-cite').forEach(function (el) { el.remove(); });
+  box.querySelectorAll('.md-code-block-banner-wrap').forEach(function (el) { el.remove(); });
+
   function texOf(el) {
     var a = el.querySelector('annotation[encoding="application/x-tex"]');
     return a ? a.textContent : '';

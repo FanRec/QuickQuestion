@@ -2,7 +2,10 @@ import MarkdownIt from "markdown-it";
 import { katex } from "@mdit/plugin-katex";
 import katexCss from "katex/dist/katex.min.css?raw";
 
-const md = new MarkdownIt({ html: false, linkify: true, breaks: true }).use(katex);
+// 剪贴板 HTML 会被 Snipaste 等渲染能力不完整的消费者打开：KaTeX 默认的
+// MathML 层靠 clip-path 隐藏，这类消费者会把它当正文显示，造成公式重复。
+// output:"html" 只生成可视层，从源头不产生隐藏副本。
+const md = new MarkdownIt({ html: false, linkify: true, breaks: true }).use(katex, { output: "html" });
 
 /** 贴图片工具（如 Snipaste）会把剪贴板里的 HTML 渲染成图片，所以样式必须自带。 */
 const BASE_CSS = `
