@@ -66,4 +66,4 @@ npm run tauri build   # 产出安装包（NSIS / MSI）
 
 ## 许可
 
-[MIT](LICENSE) © KongJi
+[MIT](LICENSE) © FanRec
