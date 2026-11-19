@@ -666,6 +666,63 @@
   margin: 14px 0;
 }
 
+.markdown .code-block { margin: 14px 0; }
+.markdown .code-block > pre {
+  margin: 0;
+  border-top: 0;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+}
+.markdown .code-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 30px;
+  padding: 0 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--separator);
+  border-bottom: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+.markdown .code-lang {
+  font: 400 var(--text-xs)/1.6 "SF Mono", "Cascadia Mono", Consolas, monospace;
+  color: var(--text-tertiary);
+}
+.markdown .code-copy {
+  font: 400 12px/1.4 var(--font-sans);
+  height: 24px;
+  padding: 0 10px;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-1);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease),
+    color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.markdown .code-block:hover .code-copy,
+.markdown .code-copy:focus-visible { opacity: 1; }
+.markdown .code-copy:hover {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+.markdown .code-copy.is-copied {
+  opacity: 1;
+  color: var(--success);
+  background: var(--success-soft);
+  border-color: transparent;
+  box-shadow: none;
+}
+.markdown .code-copy.is-error {
+  opacity: 1;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .markdown code {
   font-family: "SF Mono", "Cascadia Mono", Consolas, monospace;
   font-size: 13px;

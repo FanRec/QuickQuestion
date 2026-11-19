@@ -4,7 +4,7 @@ import { katex } from "@mdit/plugin-katex";
 import "katex/dist/katex.min.css";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { writeHtml } from "@tauri-apps/plugin-clipboard-manager";
+import { writeHtml, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { markdownToHtml } from "../lib/clipboard";
 import {
   activeSession,
@@ -28,6 +28,18 @@ import logo from "../assets/logo.png";
 import "./MainWindow.css";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true }).use(katex);
+// 代码块自带头栏：语言名 + 复制按钮。按钮内容由事件委托读取 <code>，
+// 不把代码副本塞进 HTML 属性；这里只负责结构。
+const defaultFence = md.renderer.rules.fence!;
+md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+  const lang = tokens[idx].info.trim().split(/\s+/)[0] ?? "";
+  const head =
+    `<div class="code-block-head">` +
+    `<span class="code-lang">${lang ? md.utils.escapeHtml(lang) : ""}</span>` +
+    `<button type="button" class="code-copy" data-code-copy aria-label="复制代码" title="复制代码">复制</button>` +
+    `</div>`;
+  return `<div class="code-block">${head}${defaultFence(tokens, idx, options, env, self)}</div>`;
+};
 type Panel = "list" | "settings" | "help";
 type Menu =
   | { x: number; y: number; kind: "session"; sessionId: string }
@@ -244,6 +256,31 @@ export function MainWindow() {
     } catch (e) {
       setNotice({ text: `复制失败：${errText(e)}`, kind: "error" });
     }
+  };
+
+  // 代码块复制：按钮是渲染进 innerHTML 的真实 button，这里做事件委托。
+  const copyCode = (e: React.MouseEvent<HTMLDivElement>) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-code-copy]");
+    if (!btn) return;
+    const code = btn.closest(".code-block")?.querySelector("code")?.textContent ?? "";
+    void writeText(code).then(
+      () => {
+        btn.textContent = "已复制";
+        btn.classList.add("is-copied");
+        window.setTimeout(() => {
+          btn.textContent = "复制";
+          btn.classList.remove("is-copied");
+        }, 1500);
+      },
+      () => {
+        btn.textContent = "复制失败";
+        btn.classList.add("is-error");
+        window.setTimeout(() => {
+          btn.textContent = "复制";
+          btn.classList.remove("is-error");
+        }, 3000);
+      },
+    );
   };
 
   const send = async () => {
@@ -484,6 +521,7 @@ export function MainWindow() {
                     <div className="turn-question">{selected.questionText}</div>
                     <div
                       className="turn-answer markdown"
+                      onClick={copyCode}
                       dangerouslySetInnerHTML={{ __html: md.render(selected.answerText) }}
                     />
                   </div>
