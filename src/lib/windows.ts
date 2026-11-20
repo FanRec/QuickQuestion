@@ -22,9 +22,9 @@ export const HISTORY_H = 512;
 export async function showWindow(label: WindowLabel) {
   const win = await WebviewWindow.getByLabel(label);
   if (!win) return;
-  await win.show();
-  // 最小化状态下 show() 不会还原窗口，setFocus 也带不到前台；先还原。
+  // 最小化状态下 show() 不会还原窗口，setFocus 也带不到前台；必须先 unminimize。
   await win.unminimize();
+  await win.show();
   await win.setFocus();
 }
 
