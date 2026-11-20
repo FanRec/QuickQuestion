@@ -226,6 +226,16 @@ export function MainWindow() {
     setNotice(null);
   };
 
+  // 切会话必须同时定 currentId（左栏高亮/发送归属）与 selectedId（右侧详情）。
+  // 只设前者会让右栏继续显示上一个会话的问答，出现"人在 B、内容是 A"。
+  // 空会话没有问答，selectedId 置空，右栏走 detail-empty。
+  const focusSession = (sessionId: string) => {
+    const mine = bySession.get(sessionId) ?? [];
+    setCurrentId(sessionId);
+    setSelectedId(mine.length ? mine[mine.length - 1].id : null);
+    setNotice(null);
+  };
+
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -494,7 +504,7 @@ export function MainWindow() {
                             className="sidebar-group-head"
                             onClick={() => {
                               toggleExpanded(s.id);
-                              setCurrentId(s.id);
+                              focusSession(s.id);
                             }}
                             onContextMenu={(e) => {
                               e.preventDefault();
@@ -714,7 +724,7 @@ export function MainWindow() {
                 type="button"
                 className="ctx-item"
                 onClick={() => {
-                  setCurrentId(menu.sessionId);
+                  focusSession(menu.sessionId);
                   setMenu(null);
                 }}
               >
