@@ -81,15 +81,25 @@ impl BrowserManager {
             }
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
+        // 超时不能留下已 spawn 的进程：否则重试会累积孤儿、占用端口与 profile。
+        self.shutdown();
         Err(AppError::msg("浏览器调试端口未在 30 秒内就绪，请检查是否被占用。"))
     }
 
-    /// 应用退出时回收浏览器进程。
+    /// 应用退出时回收浏览器进程。take 出句柄，重复调用安全。
     pub fn shutdown(&self) {
-        if let Some(child) = self.child.lock().unwrap().as_mut() {
+        if let Some(mut child) = self.child.lock().unwrap().take() {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+}
+
+/// 兜底回收：任何路径（包括未走托盘退出的崩溃/窗口关闭）drop 时都尝试 kill。
+/// 与显式 shutdown 幂等——shutdown 已 take 走句柄，这里拿到的是 None。
+impl Drop for BrowserManager {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 

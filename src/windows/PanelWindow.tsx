@@ -31,6 +31,8 @@ type Mode = "idle" | "input" | "history";
 export function PanelWindow() {
   const [ready, setReady] = useState(false);
   const [mode, setMode] = useState<Mode>("idle");
+  // 供长期监听读取最新形态，避免 onHotkeyInput effect 依赖 mode 反复重注册。
+  const modeRef = useRef<Mode>("idle");
   const [contentH, setContentH] = useState(0);
   const [items, setItems] = useState<Exchange[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -95,13 +97,40 @@ export function PanelWindow() {
 
   // 拖动绕过几何操作直接改 OS 窗口位置，onMoved 回填缓存，锚点才不会失真。
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     getCurrentWindow()
       .onMoved(({ payload }) => noteWindowPosition("panel", payload.x, payload.y))
       .then((fn) => {
-        unlisten = fn;
-      });
-    return () => unlisten?.();
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Alt+F4/任务栏关闭会销毁无边框窗口，之后托盘拿到的 label 已不存在、悬浮球无法恢复。
+  // 统一改为隐藏（main 窗口已有同样处理）。
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onCloseRequested((event) => {
+        event.preventDefault();
+        void getCurrentWindow().hide();
+      })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   // 形态变化 → 以右下角为锚调整窗口尺寸，球位置不动。
@@ -125,27 +154,23 @@ export function PanelWindow() {
   }, [mode, loadHistory]);
 
   useEffect(() => {
-    let unlistenRefresh: (() => void) | undefined;
-    let unlistenHotkey: (() => void) | undefined;
-    onRefresh(() => void loadHistory()).then((fn) => {
-      unlistenRefresh = fn;
-    });
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    onRefresh(() => void loadHistory(), ac.signal);
     // Alt+Q 抢焦点：球自己的输入条若开着且没在回复，就让位收起。
     // 正在回复时不动，否则独立窗口也没法接住这轮问答。
     onHotkeyInput(() => {
-      if (mode !== "input") return;
+      if (modeRef.current !== "input") return;
       void (async () => {
         const busy = await isSending().catch(() => false);
         if (!busy) setMode("idle");
       })();
-    }).then((fn) => {
-      unlistenHotkey = fn;
-    });
-    return () => {
-      unlistenRefresh?.();
-      unlistenHotkey?.();
-    };
-  }, [loadHistory, mode]);
+    }, ac.signal);
+    return () => ac.abort();
+  }, [loadHistory]);
 
   const timeOf = (ts: number) => {
     const d = new Date(ts);

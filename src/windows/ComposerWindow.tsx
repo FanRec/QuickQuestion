@@ -32,35 +32,68 @@ export function ComposerWindow() {
 
   // 拖动绕过几何操作直接改 OS 窗口位置，onMoved 回填缓存，锚点才不会失真。
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     getCurrentWindow()
       .onMoved(({ payload }) => noteWindowPosition("composer", payload.x, payload.y))
       .then((fn) => {
-        unlisten = fn;
-      });
-    return () => unlisten?.();
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
+
+  // Alt+F4 会销毁无边框窗口，之后 Alt+Q 拿不到实例；改为隐藏。
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onCloseRequested((event) => {
+        event.preventDefault();
+        void getCurrentWindow().hide();
+      })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // 唤起含多段 IPC await，连按 Alt+Q 会并发执行、把流式气泡来回搬位；用一个标志去重。
+  const wakingRef = useRef(false);
 
   // 每次唤起都重新摆到当前光标处。
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    const ac = new AbortController();
     onHotkeyInput(() => {
+      if (wakingRef.current) return;
+      wakingRef.current = true;
       void (async () => {
-        const win = getCurrentWindow();
-        const busy = await isSending().catch(() => false);
-        // 正在回复时区别对待：窗口可见说明回复的就是这个窗口本身，
-        // 把气泡原样带到光标处；不可见说明回复发生在球/主窗口，
-        // 弹一个空输入条只会抢戏，保持不动。
-        if (busy && !(await win.isVisible().catch(() => false))) return;
-        const cursor = await cursorPosition().catch(() => null);
-        await placeComposer(cursor ?? { x: 400, y: 300 }, contentHRef.current, PANEL_W);
-        await win.show();
-        await win.setFocus();
+        try {
+          const win = getCurrentWindow();
+          const busy = await isSending().catch(() => false);
+          // 正在回复时区别对待：窗口可见说明回复的就是这个窗口本身，
+          // 把气泡原样带到光标处；不可见说明回复发生在球/主窗口，
+          // 弹一个空输入条只会抢戏，保持不动。
+          if (busy && !(await win.isVisible().catch(() => false))) return;
+          const cursor = await cursorPosition().catch(() => null);
+          await placeComposer(cursor ?? { x: 400, y: 300 }, contentHRef.current, PANEL_W);
+          await win.show();
+          await win.setFocus();
+        } finally {
+          wakingRef.current = false;
+        }
       })();
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => unlisten?.();
+    }, ac.signal);
+    return () => ac.abort();
   }, []);
 
   return (

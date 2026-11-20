@@ -132,15 +132,20 @@ export function MainWindow() {
 
   // 点标题栏 X 时只隐藏、不销毁窗口。
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     const win = getCurrentWindow();
     void win.onCloseRequested((event) => {
       event.preventDefault();
       void win.hide();
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
-    return () => unlisten?.();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   // 首次进入：恢复上次选中的会话，选中该会话最新一条。
@@ -166,7 +171,7 @@ export function MainWindow() {
   }, [currentId]);
 
   useEffect(() => {
-    const unlisteners: (() => void)[] = [];
+    const ac = new AbortController();
     void Promise.all([
       onSelect((id) => {
         // 从悬浮面板「打开」过来：定位到该问答所属会话与那条问答。
@@ -180,15 +185,15 @@ export function MainWindow() {
             void loadSessions();
           }
         });
-      }),
+      }, ac.signal),
       onRefresh(() => {
         void loadSessions();
         void loadAll();
-      }),
+      }, ac.signal),
       onActive((payload) => {
         setActiveId(payload.sessionId);
         void loadSessions();
-      }),
+      }, ac.signal),
       onStream((payload) => {
         if (!streamingRef.current) return;
         const mine = pendingExchangeIdRef.current;
@@ -208,9 +213,9 @@ export function MainWindow() {
           setStreaming(false);
           setNotice({ text: payload.message, kind: "error", code: payload.kind });
         }
-      }),
-    ]).then((fns) => unlisteners.push(...fns));
-    return () => unlisteners.forEach((fn) => fn());
+      }, ac.signal),
+    ]);
+    return () => ac.abort();
   }, [loadAll, loadSessions]);
 
   // 选中项变化时滚动到顶部（单条展示，无需跟随流式滚动）。

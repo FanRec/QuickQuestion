@@ -54,8 +54,6 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
   const [activeTitle, setActiveTitle] = useState("");
   const [exchangeId, setExchangeId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  // 气泡自动消失秒数；0 表示永不消失。
-  const [hideSecs, setHideSecs] = useState(5);
   // 独立窗口整体自动收起秒数；0 表示永不。仅 window 变体生效。
   const [popupHideSecs, setPopupHideSecs] = useState(0);
   // 每次 Alt+Q 唤起 +1，用于重置独立窗口的空闲计时。
@@ -65,6 +63,9 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
   // 内容根节点：用它实测高度上报给宿主窗口。
   const bodyRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<number | undefined>(undefined);
+  // hideSecs 用 ref 读取：stream effect 不依赖它，否则设置变更会触发 cleanup
+  // 清掉已排定的隐藏计时器，导致当前回答永不自动消失。
+  const hideSecsRef = useRef(5);
   const streamingRef = useRef(false);
   // 后端事件是全局广播；只接收本实例这一轮的事件，避免旧轮结果串进来。
   const pendingExchangeIdRef = useRef<string | null>(null);
@@ -89,7 +90,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
   const loadSettings = () => {
     void getSettings()
       .then((s) => {
-        setHideSecs(s.bubbleHideSecs);
+        hideSecsRef.current = s.bubbleHideSecs;
         setPopupHideSecs(s.popupHideSecs);
       })
       .catch(() => undefined);
@@ -101,8 +102,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     loadSettings();
     // 只在独立窗口版里响应唤起（inline 版由球的形态控制显隐）。
     if (variant !== "window") return;
-    let unlistenHotkey: (() => void) | undefined;
-    let unlistenSettings: (() => void) | undefined;
+    const ac = new AbortController();
     onHotkeyInput(() => {
       setWakeTick((n) => n + 1);
       // 每次唤起都重读，防止用户改完设置后窗口没重新挂载。
@@ -110,16 +110,9 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
       // 活跃会话可能已被主窗口切走（qq://active 只在发送后发，手动切不广播），
       // 唤起时重拉一次，避免接续显示停留在过期会话。
       refreshActive();
-    }).then((fn) => {
-      unlistenHotkey = fn;
-    });
-    onSettingsChanged(loadSettings).then((fn) => {
-      unlistenSettings = fn;
-    });
-    return () => {
-      unlistenHotkey?.();
-      unlistenSettings?.();
-    };
+    }, ac.signal);
+    onSettingsChanged(loadSettings, ac.signal);
+    return () => ac.abort();
   }, [variant]);
 
   // 内容高度用实测而非公式：公式一旦和真实渲染差几像素，窗口就会裁掉内容。
@@ -151,8 +144,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
   }, [reportHeight, wakeTick, bubbleShown, answer, error, streaming, images.length, activeTitle, newSession]);
 
   useEffect(() => {
-    let unlistenStream: (() => void) | undefined;
-    let unlistenActive: (() => void) | undefined;
+    const ac = new AbortController();
     onStream((payload) => {
       // 只处理本实例发起的问答，避免两个实例互相污染。
       if (!streamingRef.current) return;
@@ -168,8 +160,9 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
         setStreaming(false);
         void emitRefresh();
         window.clearTimeout(hideTimer.current);
-        if (hideSecs > 0) {
-          hideTimer.current = window.setTimeout(() => setAnswer(null), hideSecs * 1000);
+        const secs = hideSecsRef.current;
+        if (secs > 0) {
+          hideTimer.current = window.setTimeout(() => setAnswer(null), secs * 1000);
         }
       } else {
         streamingRef.current = false;
@@ -177,9 +170,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
         setErrorKind(payload.kind);
         setStreaming(false);
       }
-    }).then((fn) => {
-      unlistenStream = fn;
-    });
+    }, ac.signal);
 
     onActive((payload) => {
       // payload 的 sessionId/title 是后端落库后发出的权威值，直接采用。
@@ -187,16 +178,13 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
       // sessionId 覆盖成空串，导致接续行消失、下次发送误判为新会话。
       setActiveId(payload.sessionId);
       setActiveTitle(payload.title);
-    }).then((fn) => {
-      unlistenActive = fn;
-    });
+    }, ac.signal);
 
     return () => {
-      unlistenStream?.();
-      unlistenActive?.();
+      ac.abort();
       window.clearTimeout(hideTimer.current);
     };
-  }, [hideSecs]);
+  }, []);
 
   // 独立窗口空闲自动收起：不打扰正在输入或正在看回复的人。
   // 条件全部不满足才开始计时，任一状态变化就取消计时。

@@ -129,8 +129,17 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // 任何退出路径（窗口关闭、系统关机、托盘之外的方式）都统一回收浏览器。
+            // 托盘那条路径仍会显式 shutdown，这里重复调用是幂等的（take 后为 None）。
+            if matches!(event, tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }) {
+                if let Some(state) = app_handle.try_state::<Arc<AppState>>() {
+                    state.browser.shutdown();
+                }
+            }
+        });
 }
 
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {

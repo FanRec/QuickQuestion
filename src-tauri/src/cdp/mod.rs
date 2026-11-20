@@ -238,6 +238,9 @@ fn write_input_js(msg_json: &str) -> String {
     }}
   }}
   if (!el) return 'NO_INPUT';
+  // 记住写入用的元素：派发 Enter 必须作用于同一个输入框。
+  // 页面可能同时存在隐藏搜索框/残留 textarea，朴素 querySelector 会选错。
+  window.__qqInput = el;
   var msg = {msg_json};
   el.focus();
   if (typeof el.value === 'string' && !el.isContentEditable) {{
@@ -731,9 +734,26 @@ impl CdpClient {
         // 给现有消息打标，并记录刚发出的文本作为新回复的身份锚点。
         let _ = self.evaluate(&mark_reply_js(&msg_json)).await?;
 
+        // 复用写入阶段记住的输入框，确保 Enter 派发给刚写入 text 的同一个元素；
+        // 页面导航或元素失效时回退到可见输入框探测，避免 NO_INPUT 后静默卡住。
         self.evaluate(
             r#"(function(){
-              var el = document.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
+              var el = window.__qqInput;
+              if (!el || !el.isConnected) {{
+                var groups = ['textarea', '[contenteditable="true"]', '[role="textbox"]'];
+                el = null;
+                for (var g = 0; g < groups.length && !el; g++) {{
+                  var list = document.querySelectorAll(groups[g]);
+                  for (var i = 0; i < list.length; i++) {{
+                    var r = list[i].getBoundingClientRect();
+                    var cs = getComputedStyle(list[i]);
+                    if (!list[i].disabled && r.width >= 8 && r.height >= 8 &&
+                        cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0') {{
+                      el = list[i]; break;
+                    }}
+                  }}
+                }}
+              }}
               if (!el) return 'NO_INPUT';
               el.focus();
               ['keydown','keypress','keyup'].forEach(function(type){
@@ -838,19 +858,24 @@ impl CdpClient {
 }
 
 /// 从 CDP HTTP 端点找到 DeepSeek 页面的 WebSocket 调试地址。
+/// 记住本应用选中的 DeepSeek 标签 id：重连时优先复用同一标签，
+/// 避免用户开着多个标签时每次重连选到不同页面（消息发 A、回复在 B 的根因）。
+/// 这是进程级单例——应用只连一个浏览器、一个页面。
+static REMEMBERED_TARGET: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+
 async fn find_page_socket(port: u16) -> Result<String, AppError> {
     let url = format!("http://127.0.0.1:{port}/json");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
         .build()
         .map_err(|e| AppError::msg(format!("HTTP 客户端初始化失败：{e}")))?;
+    let remembered = REMEMBERED_TARGET.get_or_init(|| std::sync::Mutex::new(None));
 
     let mut created = false;
     for attempt in 0..30 {
         if let Ok(resp) = client.get(&url).send().await {
             if let Ok(list) = resp.json::<Vec<Value>>().await {
-                // 多个 DeepSeek 标签会导致消息发到 A 页、回复出现在 B 页。
-                // 保留最后一个（最新标签），关闭其余，确保单一确定页面。
                 let deepseek_pages: Vec<&Value> = list
                     .iter()
                     .filter(|item| item.get("type").and_then(Value::as_str) == Some("page"))
@@ -860,16 +885,27 @@ async fn find_page_socket(port: u16) -> Result<String, AppError> {
                             .is_some_and(|u| u.contains("chat.deepseek.com"))
                     })
                     .collect();
-                if let Some((keep, extras)) = deepseek_pages.split_last() {
-                    for extra in extras {
-                        if let Some(id) = extra.get("id").and_then(Value::as_str) {
-                            let _ = client
-                                .get(format!("http://127.0.0.1:{port}/json/close/{id}"))
-                                .send()
-                                .await;
+
+                // 优先复用已记住的标签（只要它还开着）；用户标签一律不关闭。
+                let remembered_id = remembered.lock().ok().and_then(|g| g.clone());
+                let keep = remembered_id
+                    .as_ref()
+                    .and_then(|id| {
+                        deepseek_pages
+                            .iter()
+                            .find(|p| p.get("id").and_then(Value::as_str) == Some(id.as_str()))
+                            .copied()
+                    })
+                    // 没有记住的标签时，取最新的 DeepSeek 页（列表顺序最新在后）。
+                    .or_else(|| deepseek_pages.last().copied());
+
+                if let Some(page) = keep {
+                    if let Some(id) = page.get("id").and_then(Value::as_str) {
+                        if let Ok(mut g) = remembered.lock() {
+                            *g = Some(id.to_string());
                         }
                     }
-                    if let Some(ws) = keep.get("webSocketDebuggerUrl").and_then(Value::as_str) {
+                    if let Some(ws) = page.get("webSocketDebuggerUrl").and_then(Value::as_str) {
                         return Ok(ws.to_string());
                     }
                 }
