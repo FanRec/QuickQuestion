@@ -248,7 +248,8 @@ async fn send_inner(
                         // 落库失败也要回滚刚建的空会话与恢复点。
                         if let Some(sid) = &rollback_session {
                             let _ = state_for_task.store.delete_session(sid);
-                            let _ = config_for_task.set_last_session(&old_last_session);
+                            // 仅当恢复点仍指向本轮会话（期间没被用户切换）才回滚。
+                            let _ = config_for_task.restore_last_session_if(sid, &old_last_session);
                         }
                         cdp_for_task.unsubscribe().await;
                         break;
@@ -293,7 +294,8 @@ async fn send_inner(
                             .unwrap_or(false);
                         if !has_any {
                             let _ = state_for_task.store.delete_session(sid);
-                            let _ = config_for_task.set_last_session(&old_last_session);
+                            // CAS：用户期间切到别的会话则不覆盖其选择。
+                            let _ = config_for_task.restore_last_session_if(sid, &old_last_session);
                         }
                     }
                     let mut payload = serde_json::json!({

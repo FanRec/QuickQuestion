@@ -85,6 +85,19 @@ impl ConfigService {
         self.save(&settings)
     }
 
+    /// CAS 回滚恢复点：仅当当前值仍等于 expected（本轮写入的值、期间未被用户改动）
+    /// 时才写回 target。避免回复失败时把用户期间主动切换的会话覆盖成旧快照。
+    /// 返回是否实际写入。
+    pub fn restore_last_session_if(&self, expected: &str, target: &str) -> Result<bool, AppError> {
+        let mut settings = self.load();
+        if settings.last_session_id != expected {
+            return Ok(false);
+        }
+        settings.last_session_id = target.to_string();
+        self.save(&settings)?;
+        Ok(true)
+    }
+
     pub fn save(&self, settings: &Settings) -> Result<(), AppError> {
         let settings = normalize(settings.clone());
         if let Some(parent) = self.path.parent() {

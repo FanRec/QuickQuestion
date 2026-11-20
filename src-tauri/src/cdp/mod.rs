@@ -214,7 +214,7 @@ const READ_REPLY_JS: &str = r#"
   });
 
   var text = (content.innerText || content.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
-  return JSON.stringify({ found: true, text: text, generating: generating });
+  return JSON.stringify({ found: true, text: text, generating: generating, doneMark: doneMark });
 })()
 "#;
 
@@ -709,13 +709,16 @@ impl CdpClient {
         Ok(())
     }
 
-    async fn read_reply(&self) -> Result<(bool, String, bool), AppError> {
+    /// 返回 (found, text, generating, doneMark)。doneMark 是网页免责声明，
+    /// 比 generating 的瞬时 DOM 判定可靠，用于空文本回复的完成判定。
+    async fn read_reply(&self) -> Result<(bool, String, bool, bool), AppError> {
         let raw = self.evaluate(READ_REPLY_JS).await?;
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
         Ok((
             value.get("found").and_then(Value::as_bool).unwrap_or(false),
             value.get("text").and_then(Value::as_str).unwrap_or("").to_string(),
             value.get("generating").and_then(Value::as_bool).unwrap_or(false),
+            value.get("doneMark").and_then(Value::as_bool).unwrap_or(false),
         ))
     }
 
@@ -800,6 +803,10 @@ impl CdpClient {
             let deadline = std::time::Instant::now() + Duration::from_secs(180);
             let mut last = String::new();
             let mut stable_ms: u64 = 0;
+            // generating 连续为 false 的时长：空文本回复的完成依据。
+            // 与 stable_ms（文本不变时长）分开——思考阶段文本恒空但 generating=true，
+            // 用 stable_ms 会在 generating 瞬时抖动时误发空 Done。
+            let mut not_generating_ms: u64 = 0;
             // 连续读失败计数：页面改版/脚本异常时曾静默 continue 到 180s 超时，
             // 用户只看到"超时"，无法诊断。连续失败即发带原因的错误。
             let mut consecutive_errors = 0u32;
@@ -826,7 +833,7 @@ impl CdpClient {
                     return;
                 }
                 tokio::time::sleep(tick).await;
-                let (found, text, generating) = match self.read_reply().await {
+                let (found, text, generating, done_mark) = match self.read_reply().await {
                     Ok(v) => {
                         consecutive_errors = 0;
                         v
@@ -876,17 +883,25 @@ impl CdpClient {
                     stable_ms += tick.as_millis() as u64;
                 }
                 last = text.clone();
+                if generating {
+                    not_generating_ms = 0;
+                } else {
+                    not_generating_ms += tick.as_millis() as u64;
+                }
 
-                // 完成判定必须在空文本检查之前：纯图片回复或正文渲染为空时，
-                // text 一直为空，若 continue 在前会跳过判定空转到 180s 超时。
-                // generating 为 false 且文本已静默，就视为本轮完成（允许空文本）。
-                if !generating && stable_ms >= quiet_ms {
+                // 完成判定：
+                // - 有正文：generating 为 false 且文本静默 quiet_ms 即可完成。
+                // - 空正文（纯图片回复 / 思考阶段正文未渲染）：generating 是瞬时 DOM
+                //   判定，思考阶段抖动会误报 false，故要求 !generating 连续保持
+                //   quiet_ms 才完成；doneMark（网页免责声明）是直接确认信号。
+                let complete = if text.is_empty() {
+                    found && ((not_generating_ms >= quiet_ms) || done_mark)
+                } else {
+                    !generating && stable_ms >= quiet_ms
+                };
+                if complete {
                     self.finish(StreamEvent::Done { text }).await;
                     return;
-                }
-                // 仍在生成但正文尚未渲染（思考/搜索阶段）：无增量可推，继续等。
-                if text.is_empty() {
-                    continue;
                 }
             }
             self.finish(StreamEvent::Error {

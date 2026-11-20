@@ -201,13 +201,16 @@ export function MainWindow() {
         if (payload.type === "delta") {
           setStreamAnswer(payload.text);
         } else if (payload.type === "done") {
+          // 同步切出流态：streamingRef 与 UI state 必须同帧翻转，否则窗口期内
+          // 用户已能发新一轮，而本轮的异步回调会把新一轮的 UI 状态覆盖掉。
           streamingRef.current = false;
-          // 先重载数据再切出流态：否则 selected 还找不到新记录（null），
-          // 而 streaming 已 false，右栏会闪一下"从左侧选一条问题查看"。
+          setStreaming(false);
+          setStreamQuestion("");
+          setStreamAnswer("");
+          // 只把依赖新数据的选中定位放进异步；加代次校验：若期间已开新一轮
+          // （send 会把 pendingExchangeIdRef 置 null），放弃本轮旧回调。
           void loadAll().then(() => {
-            setStreaming(false);
-            setStreamQuestion("");
-            setStreamAnswer("");
+            if (streamingRef.current || pendingExchangeIdRef.current !== payload.exchangeId) return;
             setSelectedId(payload.exchangeId);
           });
           void loadSessions();

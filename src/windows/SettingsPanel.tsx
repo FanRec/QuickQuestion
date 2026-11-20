@@ -46,10 +46,8 @@ export function SettingsPanel() {
   const checkLogin = async () => {
     try {
       const status = await browserStatus();
-      if (!status.ready) {
-        setLoginInfo("浏览器调试端口未连接，请检查浏览器是否可启动。");
-        return;
-      }
+      // 后端 browser_status 在 CDP 未连接时直接 reject（走下方 catch），
+      // 成功时 ready 恒为 true，故无需判断 ready；连接失败文案由 catch 给出。
       const loggedIn = !status.needsLogin && status.inputReady;
       setLoginInfo(
         loggedIn
