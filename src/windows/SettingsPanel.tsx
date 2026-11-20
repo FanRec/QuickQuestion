@@ -46,6 +46,10 @@ export function SettingsPanel() {
   const checkLogin = async () => {
     try {
       const status = await browserStatus();
+      if (!status.ready) {
+        setLoginInfo("浏览器调试端口未连接，请检查浏览器是否可启动。");
+        return;
+      }
       const loggedIn = !status.needsLogin && status.inputReady;
       setLoginInfo(
         loggedIn
@@ -77,6 +81,11 @@ export function SettingsPanel() {
   // 左栏导航定位 + 滚动联动：右栏滚到哪一节，导航高亮跟到哪一节。
   const jumpTo = (id: SectionId) => {
     setActive(id);
+    // 高级设置是折叠的 <details>：先展开再滚动，否则只滚到一行折叠标题。
+    if (id === "advanced") {
+      const details = scrollRef.current?.querySelector<HTMLDetailsElement>("#set-advanced");
+      if (details) details.open = true;
+    }
     scrollRef.current
       ?.querySelector(`#set-${id}`)
       ?.scrollIntoView({ behavior: "smooth", block: "start" });

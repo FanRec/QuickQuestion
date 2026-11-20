@@ -202,11 +202,14 @@ export function MainWindow() {
           setStreamAnswer(payload.text);
         } else if (payload.type === "done") {
           streamingRef.current = false;
-          setStreaming(false);
-          setStreamQuestion("");
-          setStreamAnswer("");
-          setSelectedId(payload.exchangeId);
-          void loadAll();
+          // 先重载数据再切出流态：否则 selected 还找不到新记录（null），
+          // 而 streaming 已 false，右栏会闪一下"从左侧选一条问题查看"。
+          void loadAll().then(() => {
+            setStreaming(false);
+            setStreamQuestion("");
+            setStreamAnswer("");
+            setSelectedId(payload.exchangeId);
+          });
           void loadSessions();
         } else {
           streamingRef.current = false;
@@ -227,6 +230,8 @@ export function MainWindow() {
   const selectExchange = (sessionId: string, exchangeId: string) => {
     setCurrentId(sessionId);
     setSelectedId(exchangeId);
+    // 从搜索结果定位时，目标会话可能是折叠的；展开它，否则清空搜索后左栏看不到选中项。
+    setExpanded((prev) => new Set(prev).add(sessionId));
     setPanel("list");
     setNotice(null);
   };

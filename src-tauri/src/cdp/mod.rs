@@ -294,10 +294,9 @@ impl CdpClient {
         let subscriber: Arc<Mutex<Option<mpsc::UnboundedSender<StreamEvent>>>> =
             Arc::new(Mutex::new(None));
 
-        // 接收循环：按 id 唤醒挂起请求；bindingCalled 事件转给当前订阅者；
-        // 连接关闭时清空挂起表，避免永久悬挂。
+        // 接收循环：按 id 唤醒挂起请求；连接关闭时清空挂起表，避免永久悬挂。
+        // 流式增量由 Rust 轮询器直接推给订阅者，不经 WebSocket 事件回传。
         let pending_clone = pending.clone();
-        let subscriber_clone = subscriber.clone();
         let alive = Arc::new(AtomicBool::new(true));
         let alive_clone = alive.clone();
         tokio::spawn(async move {
@@ -309,24 +308,6 @@ impl CdpClient {
                                 let mut map = pending_clone.lock().await;
                                 if let Some(tx) = map.remove(&id) {
                                     let _ = tx.send(value);
-                                }
-                                continue;
-                            }
-                            // 页面经 Runtime.addBinding 推送的流式事件。
-                            if value.get("method").and_then(Value::as_str)
-                                == Some("Runtime.bindingCalled")
-                            {
-                                if let Some(payload) = value
-                                    .get("params")
-                                    .and_then(|p| p.get("payload"))
-                                    .and_then(Value::as_str)
-                                {
-                                    if let Ok(event) = serde_json::from_str::<StreamEvent>(payload) {
-                                        let sub = subscriber_clone.lock().await;
-                                        if let Some(tx) = sub.as_ref() {
-                                            let _ = tx.send(event);
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -359,11 +340,28 @@ impl CdpClient {
         }
         // 等待页面布局完成、输入框可见，避免连接后立刻发消息命中未加载的页面。
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let mut ready = false;
         while std::time::Instant::now() < deadline {
             if client.input_ready().await.unwrap_or(false) {
+                ready = true;
                 break;
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        if !ready {
+            // 输入框迟迟不出现有两种原因，必须区分：
+            // 1) 未登录——正常状态，交给后续 send 的 loginRequired 引导；
+            // 2) 页面卡死/改版——连接不可用的坏状态，不该被缓存复用。
+            let needs_login = client
+                .login_state()
+                .await
+                .map(|(n, _, _, _)| n)
+                .unwrap_or(false);
+            if !needs_login {
+                return Err(AppError::msg(
+                    "DeepSeek 页面 20 秒内未就绪（未检测到输入框），请检查页面或重新登录。",
+                ));
+            }
         }
         Ok(client)
     }
@@ -640,7 +638,9 @@ impl CdpClient {
   function find(label){{
     var list = document.querySelectorAll('[aria-pressed]');
     for (var i = 0; i < list.length; i++) {{
-      if ((list[i].textContent || '').trim() === label) return list[i];
+      var t = (list[i].textContent || '').trim();
+      // 包含匹配：开关常带附加文案（如「深度思考（R1）」），精确相等会失配。
+      if (t === label || t.indexOf(label) >= 0) return list[i];
     }}
     return null;
   }}
@@ -800,6 +800,10 @@ impl CdpClient {
             let deadline = std::time::Instant::now() + Duration::from_secs(180);
             let mut last = String::new();
             let mut stable_ms: u64 = 0;
+            // 连续读失败计数：页面改版/脚本异常时曾静默 continue 到 180s 超时，
+            // 用户只看到"超时"，无法诊断。连续失败即发带原因的错误。
+            let mut consecutive_errors = 0u32;
+            let mut last_error: Option<String> = None;
             let tick = Duration::from_millis(250);
             // 发送触发 SPA 导航到会话页，先给页面一点时间稳定再读取。
             tokio::time::sleep(Duration::from_millis(600)).await;
@@ -823,8 +827,28 @@ impl CdpClient {
                 }
                 tokio::time::sleep(tick).await;
                 let (found, text, generating) = match self.read_reply().await {
-                    Ok(v) => v,
-                    Err(_) => continue,
+                    Ok(v) => {
+                        consecutive_errors = 0;
+                        v
+                    }
+                    Err(e) => {
+                        consecutive_errors += 1;
+                        // 保留首个错误（最有诊断价值），后续失败不覆盖。
+                        if last_error.is_none() {
+                            last_error = Some(e.message);
+                        }
+                        // 导航期偶尔失败属正常；连续 12 次（约 3s）说明脚本持续异常。
+                        if consecutive_errors >= 12 {
+                            let detail = last_error.unwrap_or_default();
+                            self.finish(StreamEvent::Error {
+                                message: format!("读取回复持续失败：{detail}"),
+                                kind: None,
+                            })
+                            .await;
+                            return;
+                        }
+                        continue;
+                    }
                 };
                 // 新消息节点还没渲染（思考/搜索阶段正文为空），继续等。
                 // 只在此时探测登录态：会话过期跳登录页时回复框必然消失，
