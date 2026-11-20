@@ -374,6 +374,21 @@ impl CdpClient {
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id, tx);
 
+        // 所有返回路径（成功/发送失败/超时/CDP 错误）都在这里统一摘除表项。
+        // 接收循环先 remove 拿走 tx；这里再 remove 是幂等的。若响应永不到达，
+        // 这一步把 tx 取回并 drop，避免 pending 表随超时请求无限增长。
+        let result = self.call_inner(id, method, params, rx).await;
+        self.pending.lock().await.remove(&id);
+        result
+    }
+
+    async fn call_inner(
+        &self,
+        id: i64,
+        method: &str,
+        params: Value,
+        rx: oneshot::Receiver<Value>,
+    ) -> Result<Value, AppError> {
         let payload = json!({ "id": id, "method": method, "params": params });
         {
             let mut sender = self.sender.lock().await;
@@ -801,13 +816,16 @@ impl CdpClient {
                 }
                 last = text.clone();
 
-                if text.is_empty() {
-                    continue;
-                }
-                // 关键：网页仍在生成时绝不结束，哪怕文本暂时稳定。
+                // 完成判定必须在空文本检查之前：纯图片回复或正文渲染为空时，
+                // text 一直为空，若 continue 在前会跳过判定空转到 180s 超时。
+                // generating 为 false 且文本已静默，就视为本轮完成（允许空文本）。
                 if !generating && stable_ms >= quiet_ms {
                     self.finish(StreamEvent::Done { text }).await;
                     return;
+                }
+                // 仍在生成但正文尚未渲染（思考/搜索阶段）：无增量可推，继续等。
+                if text.is_empty() {
+                    continue;
                 }
             }
             self.finish(StreamEvent::Error {

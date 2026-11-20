@@ -166,7 +166,9 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             id if id == quit_id.as_ref() => {
-                if let Some(state) = app.try_state::<AppState>() {
+                // 注册时 manage 的是 Arc<AppState>（run 第 73 行），Tauri 按 TypeId
+                // 精确匹配状态，这里必须取同样的类型，否则恒为 None、浏览器不回收。
+                if let Some(state) = app.try_state::<Arc<AppState>>() {
                     state.browser.shutdown();
                 }
                 app.exit(0);

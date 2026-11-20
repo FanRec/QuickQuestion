@@ -223,6 +223,10 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     if (streamingRef.current) return;
     const value = text.trim();
     if (!value && images.length === 0) return;
+    // 上一轮回答的自动隐藏计时器必须清掉：否则在 hideSecs 内连发时，
+    // 旧计时器到点会把本轮新回答也 setAnswer(null) 清空。
+    window.clearTimeout(hideTimer.current);
+    hideTimer.current = undefined;
     setAnswer("");
     setError(null);
     setErrorKind(undefined);

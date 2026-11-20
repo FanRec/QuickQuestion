@@ -6,7 +6,11 @@ use crate::error::AppError;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
+    /// 缺字段时取默认值：旧版本 settings.json 只有部分字段，
+    /// 若任一必填字段缺失会导致整份反序列化失败、全量重置。
+    #[serde(default = "default_port")]
     pub browser_port: u16,
+    #[serde(default = "default_quiet_ms")]
     pub quiet_ms: u64,
     /// 会话首条问答前注入的长期设定；为空则不注入。
     #[serde(default)]
@@ -27,6 +31,14 @@ pub struct Settings {
 
 fn default_bubble_hide() -> u64 {
     5
+}
+
+fn default_port() -> u16 {
+    9222
+}
+
+fn default_quiet_ms() -> u64 {
+    900
 }
 
 impl Default for Settings {

@@ -411,10 +411,23 @@ pub fn get_settings(state: State<'_, Arc<AppState>>) -> crate::config::Settings 
 }
 
 /// 更新设置（端口改动需重启应用生效）。
+///
+/// 只接受用户可编辑的白名单字段：last_session_id 的单一写权在后端
+/// （remember_session / 发送成功后），前端传来的任何快照都不得覆盖它。
+/// 设置页挂载时读一次快照，期间若悬浮球发送或主窗口切会话改了恢复点，
+/// 保存时旧快照会把恢复点冲回旧会话——这里从后端根治。
 #[tauri::command]
 pub fn update_settings(
     state: State<'_, Arc<AppState>>,
     settings: crate::config::Settings,
 ) -> Result<(), AppError> {
-    state.config.save(&settings)
+    let mut current = state.config.load();
+    current.browser_port = settings.browser_port;
+    current.quiet_ms = settings.quiet_ms;
+    current.system_prompt = settings.system_prompt;
+    current.hotkey = settings.hotkey;
+    current.bubble_hide_secs = settings.bubble_hide_secs;
+    current.popup_hide_secs = settings.popup_hide_secs;
+    // current.last_session_id 保持不变：它是后端专属的恢复点。
+    state.config.save(&current)
 }
