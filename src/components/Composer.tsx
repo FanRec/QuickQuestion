@@ -107,6 +107,9 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
       setWakeTick((n) => n + 1);
       // 每次唤起都重读，防止用户改完设置后窗口没重新挂载。
       loadSettings();
+      // 活跃会话可能已被主窗口切走（qq://active 只在发送后发，手动切不广播），
+      // 唤起时重拉一次，避免接续显示停留在过期会话。
+      refreshActive();
     }).then((fn) => {
       unlistenHotkey = fn;
     });
@@ -179,8 +182,11 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     });
 
     onActive((payload) => {
+      // payload 的 sessionId/title 是后端落库后发出的权威值，直接采用。
+      // 不再回拉 active_session：那时网页 URL 可能还没切稳，空结果会把
+      // sessionId 覆盖成空串，导致接续行消失、下次发送误判为新会话。
       setActiveId(payload.sessionId);
-      refreshActive();
+      setActiveTitle(payload.title);
     }).then((fn) => {
       unlistenActive = fn;
     });
@@ -412,6 +418,14 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
             <path d="M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2z" fill="currentColor" />
           </svg>
           本次将开启新会话
+        </div>
+      )}
+      {!activeTitle && !newSession && (
+        <div className="composer-context composer-context--muted">
+          <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
+            <path d="M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2z" fill="currentColor" />
+          </svg>
+          未接续 · 发送将开启新会话
         </div>
       )}
 

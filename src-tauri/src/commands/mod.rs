@@ -224,11 +224,22 @@ async fn send_inner(
                     if !chat_id.is_empty() {
                         let _ = state_for_task.store.bind_chat_id(&session_for_task, &chat_id);
                     }
+                    // 事件自带标题：前端直接用它更新接续显示，不再回拉 active_session。
+                    // 回拉在 done 时刻可能读到还没切稳的网页 URL，空结果会把权威的
+                    // sessionId 覆盖成空串（接续行消失、下次发送误判为新会话）。
+                    let active_title = state_for_task
+                        .store
+                        .find_session(&session_for_task)
+                        .ok()
+                        .flatten()
+                        .map(|s| s.title)
+                        .unwrap_or_default();
                     let _ = app_for_task.emit(
                         "qq://active",
                         serde_json::json!({
                             "sessionId": session_for_task,
                             "chatId": chat_id,
+                            "title": active_title,
                         }),
                     );
                     let _ = app_for_task.emit(

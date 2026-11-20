@@ -346,6 +346,11 @@
   flex: none;
 }
 
+/* 冷启动首页、无活跃会话：中性色，避免把"无上下文"渲染成强调态。 */
+.composer-context--muted {
+  color: var(--text-tertiary);
+}
+
 /* ── 输入胶囊 ── */
 
 .composer-input-wrap {
