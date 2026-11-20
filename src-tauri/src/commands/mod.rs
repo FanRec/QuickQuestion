@@ -67,11 +67,14 @@ pub async fn send_message(
     if !state.try_begin_send() {
         return Err(AppError::msg("正在回复中，请等待完成或先打断。".to_string()));
     }
+    // 从这一刻起发送权由 guard 持有：任何失败/提前返回都自动释放，
+    // 成功路径则把 guard 交给事件消费任务，到终态再释放。
+    let guard = crate::SendGuard::new(state.inner().clone());
 
-    // 后续任何一步失败都必须释放发送权，否则应用永久锁死。
-    let result = send_inner(
+    send_inner(
         &app,
         &state,
+        guard,
         text,
         files,
         deep_think,
@@ -80,18 +83,15 @@ pub async fn send_message(
         inject_prompt,
         new_session,
     )
-    .await;
-    if result.is_err() {
-        state.end_send();
-    }
-    result
+    .await
 }
 
-/// 实际发送流程。发送权由调用方持有；成功时移交给事件消费任务，到 done/error 释放。
+/// 实际发送流程。发送权由 guard 持有；成功时 guard 移交给事件消费任务，到终态释放。
 #[allow(clippy::too_many_arguments)]
 async fn send_inner(
     app: &AppHandle,
     state: &Arc<AppState>,
+    mut guard: crate::SendGuard,
     text: String,
     files: Vec<String>,
     deep_think: bool,
@@ -160,6 +160,7 @@ async fn send_inner(
     let mut rx = match sent {
         Ok(rx) => rx,
         Err(e) => {
+            // 网页切换/发送失败：回滚刚建的空会话。guard 随 return 自动释放发送权。
             if let Some(sid) = &new_session_id {
                 let _ = state.store.delete_session(sid);
             }
@@ -168,10 +169,10 @@ async fn send_inner(
     };
 
     // 发送成功才把新会话设为启动恢复点；失败时不覆盖用户原有的恢复点。
+    // 记住旧恢复点：回复阶段失败（超时/取消/登录失效）时要还原，避免下次启动进空会话。
+    let old_last_session = settings.last_session_id.clone();
     if let Some(sid) = &new_session_id {
-        let mut updated = settings.clone();
-        updated.last_session_id = sid.clone();
-        state.config.save(&updated)?;
+        state.config.set_last_session(sid)?;
     }
 
     let app_for_task = app.clone();
@@ -186,7 +187,11 @@ async fn send_inner(
         .filter_map(|p| p.file_name())
         .map(|n| n.to_string_lossy().to_string())
         .collect::<Vec<_>>();
+    // 失败收口所需的信息随任务移动：新建会话 id 与旧恢复点。
+    let rollback_session = new_session_id.clone();
+    let config_for_task = state.config.clone();
     tauri::async_runtime::spawn(async move {
+        // guard 随任务持有发送权；任何退出路径（含 panic 前的 drop）都释放。
         while let Some(event) = rx.recv().await {
             match event {
                 StreamEvent::Delta { text } => {
@@ -202,14 +207,22 @@ async fn send_inner(
                 StreamEvent::Done { text } => {
                     let answer = text;
                     let created_at = crate::store::now_ms();
-                    if let Err(e) = state_for_task.store.add(&Exchange {
-                        id: exchange_id.clone(),
-                        session_id: session_for_task.clone(),
-                        created_at,
-                        question_text: question_text.clone(),
-                        answer_text: answer.clone(),
-                        image_names: image_names.clone(),
-                    }) {
+                    // done 时抓网页 chat_id；未切稳则为空，绑定留待下次不覆盖。
+                    let chat_id = cdp_for_task.current_chat_id().await.unwrap_or_default();
+                    // 落库 + 更新会话 + 绑定在同一事务；失败绝不发 done，
+                    // 否则前端以为完成、刷新后记录消失（error 与 done 语义冲突）。
+                    let stored = state_for_task.store.commit_exchange(
+                        &Exchange {
+                            id: exchange_id.clone(),
+                            session_id: session_for_task.clone(),
+                            created_at,
+                            question_text: question_text.clone(),
+                            answer_text: answer.clone(),
+                            image_names: image_names.clone(),
+                        },
+                        &chat_id,
+                    );
+                    if let Err(e) = stored {
                         let _ = app_for_task.emit(
                             "qq://stream",
                             serde_json::json!({
@@ -218,11 +231,13 @@ async fn send_inner(
                                 "message": format!("保存历史失败：{}", e.message),
                             }),
                         );
-                    }
-                    // 网页此刻已停在本轮会话页，抓 UUID 写回绑定，并广播活跃会话。
-                    let chat_id = cdp_for_task.current_chat_id().await.unwrap_or_default();
-                    if !chat_id.is_empty() {
-                        let _ = state_for_task.store.bind_chat_id(&session_for_task, &chat_id);
+                        // 落库失败也要回滚刚建的空会话与恢复点。
+                        if let Some(sid) = &rollback_session {
+                            let _ = state_for_task.store.delete_session(sid);
+                            let _ = config_for_task.set_last_session(&old_last_session);
+                        }
+                        cdp_for_task.unsubscribe().await;
+                        break;
                     }
                     // 事件自带标题：前端直接用它更新接续显示，不再回拉 active_session。
                     // 回拉在 done 时刻可能读到还没切稳的网页 URL，空结果会把权威的
@@ -254,6 +269,19 @@ async fn send_inner(
                     break;
                 }
                 StreamEvent::Error { message, kind } => {
+                    // 回复阶段失败：没有 exchange 落库，回滚空会话与恢复点，
+                    // 否则下次启动恢复到空会话、且该会话看似可接续实则无内容。
+                    if let Some(sid) = &rollback_session {
+                        let has_any = state_for_task
+                            .store
+                            .list_by_session(sid)
+                            .map(|v| !v.is_empty())
+                            .unwrap_or(false);
+                        if !has_any {
+                            let _ = state_for_task.store.delete_session(sid);
+                            let _ = config_for_task.set_last_session(&old_last_session);
+                        }
+                    }
                     let mut payload = serde_json::json!({
                         "type": "error",
                         "exchangeId": exchange_id,
@@ -268,8 +296,7 @@ async fn send_inner(
                 }
             }
         }
-        // 无论正常结束还是 channel 意外关闭，都释放发送权（重复置 false 无害）。
-        state_for_task.end_send();
+        guard.release();
     });
 
     Ok(SendResult {
@@ -342,9 +369,7 @@ pub async fn active_session(
 /// 记住当前选中的会话，供下次启动恢复。
 #[tauri::command]
 pub fn remember_session(state: State<'_, Arc<AppState>>, id: String) -> Result<(), AppError> {
-    let mut settings = state.config.load();
-    settings.last_session_id = id;
-    state.config.save(&settings)
+    state.config.set_last_session(&id)
 }
 
 /// 删除会话及其全部问答。

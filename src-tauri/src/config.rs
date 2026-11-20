@@ -55,6 +55,7 @@ impl Default for Settings {
     }
 }
 
+#[derive(Clone)]
 pub struct ConfigService {
     path: std::path::PathBuf,
 }
@@ -75,6 +76,13 @@ impl ConfigService {
             .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
             .map(normalize)
             .unwrap_or_default()
+    }
+
+    /// 只更新启动恢复点，不动其他字段。last_session_id 的单一写入口。
+    pub fn set_last_session(&self, id: &str) -> Result<(), AppError> {
+        let mut settings = self.load();
+        settings.last_session_id = id.to_string();
+        self.save(&settings)
     }
 
     pub fn save(&self, settings: &Settings) -> Result<(), AppError> {
@@ -105,4 +113,40 @@ fn normalize(mut s: Settings) -> Settings {
         s.hotkey = "Alt+Q".to_string();
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 旧版本 settings.json 只有部分字段：缺 browser_port/quiet_ms 时
+    /// 必须靠 serde(default) 反序列化成功，而不是整份回退到默认值。
+    #[test]
+    fn partial_settings_json_keeps_present_fields() {
+        let json = r#"{"systemPrompt":"我的长期设定","lastSessionId":"sess-1"}"#;
+        let s: Settings = serde_json::from_str(json).expect("缺字段应仍能反序列化");
+        assert_eq!(s.system_prompt, "我的长期设定");
+        assert_eq!(s.last_session_id, "sess-1");
+        // 缺失字段取 default，而非把整份设置重置。
+        assert_eq!(s.browser_port, 9222);
+        assert_eq!(s.quiet_ms, 900);
+    }
+
+    #[test]
+    fn normalize_clamps_values() {
+        let s = Settings {
+            browser_port: 0,
+            quiet_ms: 999999,
+            bubble_hide_secs: 9999,
+            popup_hide_secs: 9999,
+            hotkey: "  ".into(),
+            ..Settings::default()
+        };
+        let n = normalize(s);
+        assert_eq!(n.browser_port, 9222);
+        assert_eq!(n.quiet_ms, 900);
+        assert_eq!(n.bubble_hide_secs, 600);
+        assert_eq!(n.popup_hide_secs, 600);
+        assert_eq!(n.hotkey, "Alt+Q");
+    }
 }

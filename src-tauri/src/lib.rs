@@ -42,6 +42,37 @@ impl AppState {
     }
 }
 
+/// 发送权守卫：持有即代表发送中，Drop 时自动释放。
+/// 成功路径把它 move 进事件消费任务，失败路径随函数返回自然 drop，
+/// 任何提前 return / panic 都不会让应用永久锁死在"正在回复中"。
+pub struct SendGuard {
+    state: Arc<AppState>,
+    active: bool,
+}
+
+impl SendGuard {
+    pub fn new(state: Arc<AppState>) -> Self {
+        Self {
+            state,
+            active: true,
+        }
+    }
+
+    /// 显式释放（幂等）；通常在事件任务的终态调用，之后 guard 随任务结束 drop。
+    pub fn release(&mut self) {
+        if self.active {
+            self.state.end_send();
+            self.active = false;
+        }
+    }
+}
+
+impl Drop for SendGuard {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 impl AppState {
     pub fn new() -> Result<Self, AppError> {
         let config = ConfigService::new();

@@ -206,6 +206,60 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// 一轮问答的完整落库：插入 exchange、更新会话、绑定网页 chat_id 在同一事务。
+    /// 任一步失败整轮回滚，绝不留下"问答落了但没绑定"或"绑了但没问答"的中间态。
+    /// chat_id 为空（如 done 时 URL 未切稳）时不写绑定，但其余两步仍原子提交。
+    pub fn commit_exchange(
+        &self,
+        exchange: &Exchange,
+        chat_id: &str,
+    ) -> Result<(), AppError> {
+        let images = serde_json::to_string(&exchange.image_names)
+            .map_err(|e| AppError::msg(format!("图片列表编码失败：{e}")))?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::msg(format!("开启事务失败：{e}")))?;
+        let n = tx
+            .execute(
+                "INSERT INTO exchanges (id, session_id, created_at, question_text, answer_text, image_names)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    exchange.id,
+                    exchange.session_id,
+                    exchange.created_at,
+                    exchange.question_text,
+                    exchange.answer_text,
+                    images
+                ],
+            )
+            .map_err(|e| AppError::msg(format!("保存问答失败：{e}")))?;
+        if n == 0 {
+            return Err(AppError::msg("保存问答失败：未写入任何记录。".to_string()));
+        }
+        let touched = tx
+            .execute(
+                "UPDATE sessions SET updated_at = ?2,
+                    title = CASE WHEN title = '新会话' THEN substr(?3, 1, 28) ELSE title END,
+                    deepseek_chat_id = CASE WHEN ?4 <> '' THEN ?4 ELSE deepseek_chat_id END
+                 WHERE id = ?1",
+                params![
+                    exchange.session_id,
+                    exchange.created_at,
+                    exchange.question_text,
+                    chat_id
+                ],
+            )
+            .map_err(|e| AppError::msg(format!("更新会话失败：{e}")))?;
+        // 会话在流式期间被删除：UPDATE 影响 0 行，整轮回滚，避免孤儿 exchange。
+        if touched == 0 {
+            return Err(AppError::msg("保存问答失败：所属会话已不存在。".to_string()));
+        }
+        tx.commit()
+            .map_err(|e| AppError::msg(format!("提交问答失败：{e}")))?;
+        Ok(())
+    }
+
     pub fn add(&self, exchange: &Exchange) -> Result<(), AppError> {
         let images = serde_json::to_string(&exchange.image_names)
             .map_err(|e| AppError::msg(format!("图片列表编码失败：{e}")))?;
@@ -448,5 +502,32 @@ mod tests {
         let in_session = store.list_by_session(&s.id).unwrap();
         assert_eq!(in_session[0].id, "old");
         assert_eq!(in_session[1].id, "new");
+    }
+
+    #[test]
+    fn commit_exchange_atomic_and_binds_chat_id() {
+        let store = memory_store();
+        let s = store.create_session("新会话").unwrap();
+        let mut ex = sample(vec![]);
+        ex.id = "e1".into();
+        ex.session_id = s.id.clone();
+        store.commit_exchange(&ex, "chat-abc").unwrap();
+
+        // 问答落库、标题补上、chat_id 绑定，三步都应生效。
+        assert_eq!(store.list().unwrap().len(), 1);
+        let bound = store.find_by_chat_id("chat-abc").unwrap().unwrap();
+        assert_eq!(bound.id, s.id);
+        assert_eq!(bound.title, "这是问题");
+    }
+
+    #[test]
+    fn commit_exchange_rolls_back_when_session_deleted() {
+        let store = memory_store();
+        // 会话不存在：UPDATE 影响 0 行，整轮回滚，不能留下孤儿 exchange。
+        let mut ex = sample(vec![]);
+        ex.id = "orphan".into();
+        ex.session_id = "already-deleted".into();
+        assert!(store.commit_exchange(&ex, "chat-x").is_err());
+        assert!(store.list().unwrap().is_empty());
     }
 }
