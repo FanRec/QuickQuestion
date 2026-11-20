@@ -60,7 +60,6 @@ pub async fn send_message(
     deep_think: bool,
     web_search: bool,
     session_id: String,
-    inject_prompt: bool,
     new_session: bool,
 ) -> Result<SendResult, AppError> {
     // 抢发送权：失败要立刻明确返回，前端才能提示"正在回复中"而不是静默卡住。
@@ -80,7 +79,6 @@ pub async fn send_message(
         deep_think,
         web_search,
         session_id,
-        inject_prompt,
         new_session,
     )
     .await
@@ -97,7 +95,6 @@ async fn send_inner(
     deep_think: bool,
     web_search: bool,
     session_id: String,
-    inject_prompt: bool,
     new_session: bool,
 ) -> Result<SendResult, AppError> {
     let cdp = state.ensure_cdp().await?;
@@ -127,8 +124,16 @@ async fn send_inner(
     let exchange_id = id.clone();
     let quiet_ms = settings.quiet_ms;
 
-    // 会话首条问答才注入长期设定；新建的会话总是首条。
-    let outgoing = if inject_prompt && !settings.system_prompt.trim().is_empty() {
+    // 是否注入长期设定由后端权威判定，不再依赖前端传来的标志：
+    // 前端两个入口（悬浮球/主窗口）判定逻辑不同，且悬浮球看不到会话问答数，必然猜错。
+    // 权威依据：本轮新建的会话一定是首条；已绑定的会话若本地一条问答都没有也是首条。
+    let is_first = new_session_id.is_some()
+        || state
+            .store
+            .list_by_session(&chosen.id)
+            .map(|v| v.is_empty())
+            .unwrap_or(false);
+    let outgoing = if is_first && !settings.system_prompt.trim().is_empty() {
         format!(
             "[长期设定]\n{}\n[/长期设定]\n\n{}",
             settings.system_prompt.trim(),
@@ -190,6 +195,8 @@ async fn send_inner(
     // 失败收口所需的信息随任务移动：新建会话 id 与旧恢复点。
     let rollback_session = new_session_id.clone();
     let config_for_task = state.config.clone();
+    // 接续会话已知 chat_id，无需在 done 时刻再抓 URL（可能还没切稳）。
+    let known_chat_id = chosen.deepseek_chat_id.clone();
     tauri::async_runtime::spawn(async move {
         // guard 随任务持有发送权；任何退出路径（含 panic 前的 drop）都释放。
         while let Some(event) = rx.recv().await {
@@ -207,8 +214,15 @@ async fn send_inner(
                 StreamEvent::Done { text } => {
                     let answer = text;
                     let created_at = crate::store::now_ms();
-                    // done 时抓网页 chat_id；未切稳则为空，绑定留待下次不覆盖。
-                    let chat_id = cdp_for_task.current_chat_id().await.unwrap_or_default();
+                    // 接续会话沿用已知 chat_id；新建会话则等 URL 切稳（最多 5s），
+                    // 避免 done 早于 SPA 导航导致绑定失败、下次无法接续。
+                    let chat_id = if known_chat_id.is_empty() {
+                        cdp_for_task
+                            .current_chat_id_wait(std::time::Duration::from_secs(5))
+                            .await
+                    } else {
+                        known_chat_id.clone()
+                    };
                     // 落库 + 更新会话 + 绑定在同一事务；失败绝不发 done，
                     // 否则前端以为完成、刷新后记录消失（error 与 done 语义冲突）。
                     let stored = state_for_task.store.commit_exchange(
@@ -353,17 +367,29 @@ pub fn is_sending(state: State<'_, Arc<AppState>>) -> bool {
 }
 
 /// 当前网页会话：chatId 来自 URL，本地会话由绑定反查。
-/// 前端据此显示活跃标记；冷启动时也可用来校正选中项。
+/// 冷启动时浏览器尚未连接、或网页停在首页没有 chat_id——此时回退到持久化的
+/// last_session_id（启动恢复点）。否则悬浮球的 refreshActive 恒拿到 None，
+/// 接续显示永远是"未接续"，即使上次明明聊过。
 #[tauri::command]
 pub async fn active_session(
     state: State<'_, Arc<AppState>>,
 ) -> Result<Option<Session>, AppError> {
-    let cdp = match state.cdp.lock().await.as_ref() {
-        Some(cdp) => cdp.clone(),
-        None => return Ok(None),
+    let chat_id = match state.cdp.lock().await.as_ref() {
+        Some(cdp) => cdp.current_chat_id().await.unwrap_or_default(),
+        None => String::new(),
     };
-    let chat_id = cdp.current_chat_id().await.unwrap_or_default();
-    state.store.find_by_chat_id(&chat_id)
+    // 网页 URL 是运行时真相源；命中就用它。
+    if !chat_id.is_empty() {
+        if let Some(s) = state.store.find_by_chat_id(&chat_id)? {
+            return Ok(Some(s));
+        }
+    }
+    // 冷启动回退：网页还没连上或停在首页时，用启动恢复点。
+    let last = state.config.load().last_session_id;
+    if last.is_empty() {
+        return Ok(None);
+    }
+    state.store.find_session(&last)
 }
 
 /// 记住当前选中的会话，供下次启动恢复。

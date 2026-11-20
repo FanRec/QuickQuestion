@@ -518,6 +518,23 @@ impl CdpClient {
         Ok(parse_chat_id(&url))
     }
 
+    /// 等待 URL 出现会话 UUID（SPA 导航可能慢于回复完成判定）。
+    /// 用于 done 时刻绑定 chat_id：切稳前拿到空串会导致会话永远无法接续。
+    pub async fn current_chat_id_wait(&self, max_wait: Duration) -> String {
+        let deadline = std::time::Instant::now() + max_wait;
+        loop {
+            if let Ok(id) = self.current_chat_id().await {
+                if !id.is_empty() {
+                    return id;
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return String::new();
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
     /// 把浏览器窗口移到屏幕中央、切到登录页并激活，供用户完成登录。
     /// 平时窗口被放在屏幕外，登录场景必须让它可见且获得焦点。
     pub async fn show_browser_window(&self) -> Result<(), AppError> {

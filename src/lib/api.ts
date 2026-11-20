@@ -13,7 +13,6 @@ export function sendMessage(input: {
   deepThink: boolean;
   webSearch: boolean;
   sessionId: string;
-  injectPrompt: boolean;
   newSession: boolean;
 }): Promise<SendResult> {
   return invoke<SendResult>("send_message", input);

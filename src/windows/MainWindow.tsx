@@ -363,7 +363,6 @@ export function MainWindow() {
         deepThink,
         webSearch,
         sessionId: currentId ?? "",
-        injectPrompt: newSession || (bySession.get(currentId ?? "")?.length ?? 0) === 0,
         newSession,
       });
       pendingExchangeIdRef.current = result.exchangeId;

@@ -235,7 +235,6 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
         deepThink,
         webSearch,
         sessionId: activeId,
-        injectPrompt: newSession,
         newSession,
       });
       pendingExchangeIdRef.current = result.exchangeId;
