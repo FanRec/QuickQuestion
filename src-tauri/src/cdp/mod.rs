@@ -555,6 +555,7 @@ impl CdpClient {
                 // 旧版 CDP 要求显式 targetId 时再走页面列表（兼容性兜底）。
                 let url = format!("http://127.0.0.1:{}/json/list", self.port);
                 let list: Vec<Value> = reqwest::Client::builder()
+                    .no_proxy()
                     .timeout(Duration::from_secs(3))
                     .build()
                     .map_err(|e| AppError::msg(format!("HTTP 客户端初始化失败：{e}")))?
@@ -923,6 +924,7 @@ static REMEMBERED_TARGET: std::sync::OnceLock<std::sync::Mutex<Option<String>>> 
 async fn find_page_socket(port: u16) -> Result<String, AppError> {
     let url = format!("http://127.0.0.1:{port}/json");
     let client = reqwest::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(3))
         .build()
         .map_err(|e| AppError::msg(format!("HTTP 客户端初始化失败：{e}")))?;

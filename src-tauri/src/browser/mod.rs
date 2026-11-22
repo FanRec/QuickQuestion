@@ -106,6 +106,7 @@ impl Drop for BrowserManager {
 async fn port_ready(port: u16) -> bool {
     let url = format!("http://127.0.0.1:{port}/json/version");
     match reqwest::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(2))
         .build()
     {
@@ -165,4 +166,67 @@ fn find_browser() -> Option<std::path::PathBuf> {
             .collect()
     };
     candidates.into_iter().find(|p| p.exists())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// CDP 端点在本机回环地址上，系统代理环境下也必须能探活。
+    /// 这条测试在 port_ready 不带 no_proxy() 时会失败：无效 HTTP_PROXY
+    /// 会把探测请求劫走，假端点收不到请求，port_ready 返回 false。
+    #[tokio::test]
+    async fn port_ready_ignores_system_proxy() {
+        // 起一个假的 CDP 端点，只回应一次探测。
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 512];
+                let _ = stream.read(&mut buf);
+                let body = r#"{"Browser":"fake"}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+
+        // 清掉可能干扰判定的代理变量，再设一个必然连不通的代理。
+        let keys = [
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ];
+        let saved: Vec<(String, Option<String>)> = keys
+            .iter()
+            .map(|k| (k.to_string(), std::env::var(k).ok()))
+            .collect();
+        for k in keys {
+            std::env::remove_var(k);
+        }
+        std::env::set_var("HTTP_PROXY", "http://127.0.0.1:1");
+
+        let ready = port_ready(port).await;
+
+        // 恢复环境；并主动唤醒 server 线程，避免修复前它一直阻塞在 accept。
+        for (k, v) in saved {
+            match v {
+                Some(val) => std::env::set_var(&k, val),
+                None => std::env::remove_var(&k),
+            }
+        }
+        let _ = std::net::TcpStream::connect(("127.0.0.1", port));
+        let _ = server.join();
+
+        assert!(ready, "本机 CDP 端点不应被系统代理拦截");
+    }
 }
