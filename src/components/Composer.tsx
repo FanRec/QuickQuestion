@@ -247,6 +247,17 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     }
   };
 
+  // 打断：丢弃本轮接收。必须清 answer，否则 bubbleShown 因 answer !== null 恒真，
+  // 气泡残留且 hideTimer 只在 done 分支排定，独立窗口还会因此判为 busy 永不收起。
+  const cancel = () => {
+    void cancelMessage();
+    streamingRef.current = false;
+    setStreaming(false);
+    setAnswer(null);
+    setExchangeId(null);
+    window.clearTimeout(hideTimer.current);
+  };
+
   // 高度变化由 ResizeObserver 自动上报，这里只管把 textarea 撑开。
   const autoGrow = (el: HTMLTextAreaElement) => {
     el.style.height = "auto";
@@ -455,9 +466,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
             }
             if (e.key === "Escape") {
               if (streaming) {
-                void cancelMessage();
-                setStreaming(false);
-                streamingRef.current = false;
+                cancel();
               } else {
                 onClose?.();
               }
@@ -469,11 +478,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
             type="button"
             className="composer-stop-btn"
             title="打断回复"
-            onClick={() => {
-              void cancelMessage();
-              streamingRef.current = false;
-              setStreaming(false);
-            }}
+            onClick={cancel}
           >
             <svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true">
               <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />

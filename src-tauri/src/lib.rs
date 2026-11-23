@@ -141,7 +141,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::ping,
             commands::browser_status,
             commands::send_message,
             commands::cancel_message,

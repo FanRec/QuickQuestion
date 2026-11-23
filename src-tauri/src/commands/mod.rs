@@ -9,12 +9,6 @@ use crate::model::{BrowserStatus, Exchange, Session};
 use crate::store::to_markdown;
 use crate::AppState;
 
-/// 健康检查命令；M0 用于验证 IPC 链路。
-#[tauri::command]
-pub fn ping() -> String {
-    "pong".to_string()
-}
-
 /// 确保浏览器与 CDP 就绪，返回可展示的连接状态。
 #[tauri::command]
 pub async fn browser_status(state: State<'_, Arc<AppState>>) -> Result<BrowserStatus, AppError> {
@@ -97,6 +91,11 @@ async fn send_inner(
     new_session: bool,
 ) -> Result<SendResult, AppError> {
     let cdp = state.ensure_cdp().await?;
+    // 取消标志必须在发送准备期的等待之前重置：原先在 subscribe 之后才 reset，
+    // 用户在导航/开关同步期间点「打断」置位的 cancelled 会被吞掉，导致回复照常
+    // 落库、前端却已退出 stream 态而全程丢弃事件。冷启动连接期 cancel 本就拿不到
+    // cdp，无需覆盖；此处重置后，后续所有准备期等待中的取消都能生效。
+    cdp.reset_cancel();
     // 设置整轮只读一次：quiet_ms / system_prompt / last_session_id 同源，
     // 避免发送过程中多次读盘拿到不一致的快照。
     let settings = state.config.load();
@@ -158,7 +157,6 @@ async fn send_inner(
         cdp.apply_modes(deep_think, web_search).await?;
         // 先订阅再发送，避免事件在订阅之前到达而丢失。
         let rx = cdp.subscribe().await;
-        cdp.reset_cancel();
         cdp.send_message(&outgoing, &files).await?;
         Ok(rx)
     }

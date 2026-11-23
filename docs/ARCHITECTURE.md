@@ -63,20 +63,20 @@ struct Exchange {
 ```
 前端输入框回车
   → invoke("send_message", {text, files, deepThink, webSearch,
-                             sessionId, injectPrompt, newSession})
+                             sessionId, newSession})
   → commands::send_message:
       1. try_begin_send 抢占发送权（一个问答周期内拒绝第二次提交）
       2. ensure_cdp：浏览器没起就起（离屏窗口 + 专用 profile），
-         CDP 连接死了就重连
+         CDP 连接死了就重连；随后 reset_cancel，使准备期内的打断都能生效
       3. 会话决策：
          - newSession=true 或原会话无绑定 → 本地新建会话
-         - 有绑定 → 网页导航到对应 chat，接续上下文
+         - 有绑定 → 仅当网页不在目标 chat 时才导航，已在则跳过重载
       4. cdp::send：
          a. apply_modes 同步「深度思考/智能搜索」开关（导航后 DOM 重建，必须后置）
          b. subscribe 安装 mpsc 订阅者再发送，防事件丢失
-         c. 上传图片（DOM.setFileInputFiles）、写入输入框、派发 Enter
-         d. 给现有 .ds-message 打标，记录发出的文本作为新回复的身份锚点
-      5. spawn_reply_poller 每 250ms 读一次新回复：
+         c. 上传图片（DOM.setFileInputFiles）、写入输入框
+         d. 给现有 .ds-message 打标、记下发出文本作为身份锚点，再派发 Enter
+      5. spawn_reply_poller 每 80ms 读一次新回复：
          - 增量 → emit("qq://stream", {type:"delta", exchangeId, text})
          - 完成 = 生成停止且文本静默 quiet_ms；按钮状态卡住时由独立静默兜底
          - 完成 → 落库 → emit done；失败 → emit error（kind=loginRequired 等）

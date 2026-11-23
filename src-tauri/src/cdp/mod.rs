@@ -16,6 +16,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL_TICK_MS: u64 = 80;
 /// 连续读失败上限：按 80ms 节奏累计约 3 秒即判为持续异常。
 const CONSECUTIVE_ERROR_LIMIT: u32 = (3_000 / POLL_TICK_MS) as u32;
+/// 无回复节点时探测登录态的间隔：login_state 会读全页 innerText 强制重排。
+const LOGIN_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
 /// 从 `https://chat.deepseek.com/a/chat/s/{uuid}...` 中取出 uuid。
 fn parse_chat_id(url: &str) -> String {
@@ -810,6 +812,8 @@ impl CdpClient {
             // 用户只看到"超时"，无法诊断。连续失败即发带原因的错误。
             let mut consecutive_errors = 0u32;
             let mut last_error: Option<String> = None;
+            // 登录态探测的节流时钟：进入 poller 时探一次。
+            let mut last_login_check = std::time::Instant::now() - LOGIN_CHECK_INTERVAL;
             // CDP 单次往返实测约 1.2ms，80ms 轮询即可接近实时且仍有充足余量。
             let tick = Duration::from_millis(POLL_TICK_MS);
             // 发送前的 navigate_and_wait 已等 input_ready 并额外稳定 400ms，
@@ -858,17 +862,21 @@ impl CdpClient {
                     }
                 };
                 // 新消息节点还没渲染（思考/搜索阶段正文为空），继续等。
-                // 只在此时探测登录态：会话过期跳登录页时回复框必然消失，
-                // 没必要每个 tick 都对全页做 innerText 扫描（会强制浏览器重排）。
+                // 只在此时探测登录态：会话过期跳登录页时回复框必然消失。
+                // 但 login_state 会读全页 innerText 强制重排，80ms 一次太密；
+                // 深度思考阶段这里可持续数十秒，故按固定间隔节流。
                 if !found {
-                    if let Ok((needs_login, _, _, _)) = self.login_state().await {
-                        if needs_login {
-                            self.finish(StreamEvent::Error {
-                                message: "DeepSeek 登录状态已失效，请重新登录。".to_string(),
-                                kind: Some("loginRequired".to_string()),
-                            })
-                            .await;
-                            return;
+                    if last_login_check.elapsed() >= LOGIN_CHECK_INTERVAL {
+                        last_login_check = std::time::Instant::now();
+                        if let Ok((needs_login, _, _, _)) = self.login_state().await {
+                            if needs_login {
+                                self.finish(StreamEvent::Error {
+                                    message: "DeepSeek 登录状态已失效，请重新登录。".to_string(),
+                                    kind: Some("loginRequired".to_string()),
+                                })
+                                .await;
+                                return;
+                            }
                         }
                     }
                     continue;
@@ -928,8 +936,9 @@ fn is_complete(
     if text_empty {
         not_generating_ms >= quiet_ms
     } else {
-        // 正常流式生成中文本每 250ms 都在变化，静默 8 秒几乎不可能发生；
-        // 该兜底只依赖文本，不受按钮状态刷新延迟影响。
+        // 正常流式生成中文本几乎每个 tick 都在变化；该兜底只依赖文本，
+        // 不受按钮状态刷新延迟影响。窗口取 quiet_ms 的 4 倍且至少 8 秒，
+        // 默认值下为 8 秒，用户调大 quiet_ms 时会同步放大。
         let fallback_ms = (quiet_ms * 4).max(8_000);
         (!generating && stable_ms >= quiet_ms) || stable_ms >= fallback_ms
     }
