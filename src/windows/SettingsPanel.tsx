@@ -240,7 +240,7 @@ export function SettingsPanel() {
                 step={100}
                 onChange={(e) => change("quietMs", Number(e.target.value))}
               />
-              <span className="settings-hint">回复速度慢可调大，默认 900</span>
+              <span className="settings-hint">误判回复未完成时可调大，默认 900</span>
             </label>
           </details>
         </div>
