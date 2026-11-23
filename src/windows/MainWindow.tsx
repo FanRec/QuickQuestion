@@ -577,7 +577,14 @@ export function MainWindow() {
                   <div className="turn">
                     <div className="turn-question">{streamQuestion}</div>
                     <div className="turn-answer detail-streaming">
-                      {streamAnswer || "正在思考…"}
+                      {streamAnswer ? (
+                        <>
+                          <span className="stream-status">正在回答…</span>
+                          {streamAnswer}
+                        </>
+                      ) : (
+                        "思考中…"
+                      )}
                     </div>
                   </div>
                 )}

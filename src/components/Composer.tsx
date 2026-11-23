@@ -301,7 +301,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
                 <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
                   <path d="M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2z" fill="currentColor" />
                 </svg>
-                <span>正在回答…</span>
+                <span>思考中…</span>
                 <span className="composer-dots">
                   <i />
                   <i />
@@ -316,7 +316,19 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
               <img className="composer-skeleton-mascot" src={mascotFace} alt="" draggable={false} />
             </div>
           ) : (
-            <div className="composer-bubble-text">{error ?? answer}</div>
+            <>
+              {streaming && !error && (
+                <div className="composer-bubble-status">
+                  <span className="composer-dots">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                  正在回答…
+                </div>
+              )}
+              <div className="composer-bubble-text">{error ?? answer}</div>
+            </>
           )}
           <button
             type="button"

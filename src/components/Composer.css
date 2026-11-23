@@ -35,6 +35,17 @@
   user-select: text;
 }
 
+/* 正文流出阶段的轻状态行：与骨架屏区分，不抢占正文空间 */
+.composer-bubble-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
 /* 文本区独立滚动：吉祥物和按钮不随内容滚走 */
 .composer-bubble-text {
   max-height: 148px;

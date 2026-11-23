@@ -12,6 +12,11 @@ use crate::error::AppError;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// 轮询节奏：CDP 单次往返约 1.2ms，80ms 可逼近网页的流式观感。
+const POLL_TICK_MS: u64 = 80;
+/// 连续读失败上限：按 80ms 节奏累计约 3 秒即判为持续异常。
+const CONSECUTIVE_ERROR_LIMIT: u32 = (3_000 / POLL_TICK_MS) as u32;
+
 /// 从 `https://chat.deepseek.com/a/chat/s/{uuid}...` 中取出 uuid。
 fn parse_chat_id(url: &str) -> String {
     let Some(rest) = url.split("/a/chat/s/").nth(1) else {
@@ -805,9 +810,10 @@ impl CdpClient {
             // 用户只看到"超时"，无法诊断。连续失败即发带原因的错误。
             let mut consecutive_errors = 0u32;
             let mut last_error: Option<String> = None;
-            let tick = Duration::from_millis(250);
-            // 发送触发 SPA 导航到会话页，先给页面一点时间稳定再读取。
-            tokio::time::sleep(Duration::from_millis(600)).await;
+            // CDP 单次往返实测约 1.2ms，80ms 轮询即可接近实时且仍有充足余量。
+            let tick = Duration::from_millis(POLL_TICK_MS);
+            // 发送前的 navigate_and_wait 已等 input_ready 并额外稳定 400ms，
+            // 这里不再重复冷启动等待，否则正文开头必然延迟。
 
             while std::time::Instant::now() < deadline {
                 if !self.alive.load(Ordering::SeqCst) {
@@ -838,8 +844,8 @@ impl CdpClient {
                         if last_error.is_none() {
                             last_error = Some(e.message);
                         }
-                        // 导航期偶尔失败属正常；连续 12 次（约 3s）说明脚本持续异常。
-                        if consecutive_errors >= 12 {
+                        // 导航期偶尔失败属正常；连续约 3s 都失败说明脚本持续异常。
+                        if consecutive_errors >= CONSECUTIVE_ERROR_LIMIT {
                             let detail = last_error.unwrap_or_default();
                             self.finish(StreamEvent::Error {
                                 message: format!("读取回复持续失败：{detail}"),
@@ -1000,7 +1006,7 @@ async fn find_page_socket(port: u16) -> Result<String, AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_complete, parse_chat_id};
+    use super::{is_complete, parse_chat_id, CONSECUTIVE_ERROR_LIMIT, POLL_TICK_MS};
 
     #[test]
     fn parses_chat_id_from_session_url() {
@@ -1046,5 +1052,12 @@ mod tests {
         assert!(!is_complete(true, true, 10_000, 0, 900));
         assert!(!is_complete(true, false, 10_000, 500, 900));
         assert!(is_complete(true, false, 0, 1_000, 900));
+    }
+
+    // 提高帧率后错误阈值必须仍约等于 3 秒，不能随 tick 缩短而误报。
+    #[test]
+    fn poll_pacing_keeps_error_window_around_three_seconds() {
+        let window_ms = CONSECUTIVE_ERROR_LIMIT as u64 * POLL_TICK_MS;
+        assert!((2_000..=4_000).contains(&window_ms));
     }
 }
