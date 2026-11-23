@@ -145,11 +145,14 @@ async fn send_inner(
 
     // 网页切换到发送这一段的任何失败都不能留下空会话。
     let sent = async {
-        // 网页切到目标会话：有绑定则接续，否则开全新对话。
-        if chosen.deepseek_chat_id.is_empty() {
-            cdp.new_conversation().await?;
-        } else {
-            cdp.navigate_to_chat(&chosen.deepseek_chat_id).await?;
+        // 网页切到目标会话：已在目标则跳过导航，避免连续追问整页重载。
+        let current_chat_id = cdp.current_chat_id().await.unwrap_or_default();
+        if needs_navigate(&current_chat_id, &chosen.deepseek_chat_id) {
+            if chosen.deepseek_chat_id.is_empty() {
+                cdp.new_conversation().await?;
+            } else {
+                cdp.navigate_to_chat(&chosen.deepseek_chat_id).await?;
+            }
         }
 
         // 模式开关必须在导航之后同步——导航会重建 DOM，之前点的开关状态会丢。
@@ -483,4 +486,37 @@ pub fn update_settings(
     current.popup_hide_secs = settings.popup_hide_secs;
     // current.last_session_id 保持不变：它是后端专属的恢复点。
     state.config.save(&current)
+}
+
+/// 是否必须整页导航到目标会话。已在目标会话时跳过：连续追问每次都导航会
+/// 重载页面，丢掉消息标记、触发懒加载，并额外付出 input_ready 轮询与稳定等待。
+fn needs_navigate(current_chat_id: &str, target_chat_id: &str) -> bool {
+    // 开新会话必须回首页以清除当前上下文，即使当前 URL 没有 chat_id。
+    if target_chat_id.is_empty() {
+        return true;
+    }
+    current_chat_id != target_chat_id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::needs_navigate;
+
+    // 已在目标会话：跳过整页导航，避免连续追问时重载页面。
+    #[test]
+    fn skips_navigation_when_already_on_target_chat() {
+        assert!(!needs_navigate("chat-1", "chat-1"));
+    }
+
+    #[test]
+    fn navigates_for_new_chat_even_if_current_is_empty() {
+        assert!(needs_navigate("", ""));
+        assert!(needs_navigate("chat-1", ""));
+    }
+
+    #[test]
+    fn navigates_when_target_chat_differs() {
+        assert!(needs_navigate("chat-1", "chat-2"));
+        assert!(needs_navigate("", "chat-2"));
+    }
 }

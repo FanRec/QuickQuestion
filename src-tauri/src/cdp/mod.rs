@@ -159,13 +159,7 @@ const READ_REPLY_JS: &str = r#"
   }
   if (!box) return JSON.stringify({ found: false, text: '', generating: generatingNow() });
 
-  // 网页在回复末尾显示的免责声明是比静默更可靠的完成标记（避开 hash class）。
-  var doneMark = false;
-  var divs = box.querySelectorAll('div');
-  for (var j = 0; j < divs.length; j++) {
-    if ((divs[j].textContent || '').indexOf('本回答由 AI 生成') >= 0) { doneMark = true; break; }
-  }
-  var generating = generatingNow() && !doneMark;
+  var generating = generatingNow();
 
   var content = box.querySelector('.ds-assistant-message-main-content').cloneNode(true);
   content.querySelectorAll('[data-citation-group], .ds-markdown-cite').forEach(function (el) { el.remove(); });
@@ -214,7 +208,7 @@ const READ_REPLY_JS: &str = r#"
   });
 
   var text = (content.innerText || content.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
-  return JSON.stringify({ found: true, text: text, generating: generating, doneMark: doneMark });
+  return JSON.stringify({ found: true, text: text, generating: generating });
 })()
 "#;
 
@@ -710,16 +704,16 @@ impl CdpClient {
         Ok(())
     }
 
-    /// 返回 (found, text, generating, doneMark)。doneMark 是网页免责声明，
-    /// 比 generating 的瞬时 DOM 判定可靠，用于空文本回复的完成判定。
-    async fn read_reply(&self) -> Result<(bool, String, bool, bool), AppError> {
+    /// 返回 (found, text, generating)。
+    /// 完成判定只依赖 generating 与文本静默；网页免责声明不作为信号——
+    /// 它位于虚拟列表末尾的全局节点，不在单条回复内，接续会话时会误判。
+    async fn read_reply(&self) -> Result<(bool, String, bool), AppError> {
         let raw = self.evaluate(READ_REPLY_JS).await?;
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
         Ok((
             value.get("found").and_then(Value::as_bool).unwrap_or(false),
             value.get("text").and_then(Value::as_str).unwrap_or("").to_string(),
             value.get("generating").and_then(Value::as_bool).unwrap_or(false),
-            value.get("doneMark").and_then(Value::as_bool).unwrap_or(false),
         ))
     }
 
@@ -797,8 +791,8 @@ impl CdpClient {
         }
     }
 
-    /// Rust 侧轮询回复并推送事件。新回复靠"未打标"识别，完成靠网页停止生成判定：
-    /// 静默只用于确认文本不再变化，不再单独作为完成依据（思考/联网会长时间静默）。
+    /// Rust 侧轮询回复并推送事件。新回复靠"未打标"识别；完成判定见 `is_complete`：
+    /// 生成停止 + 文本静默为主，另有独立于按钮状态的静默兜底。
     pub fn spawn_reply_poller(self: Arc<Self>, quiet_ms: u64) {
         tokio::spawn(async move {
             let deadline = std::time::Instant::now() + Duration::from_secs(180);
@@ -834,7 +828,7 @@ impl CdpClient {
                     return;
                 }
                 tokio::time::sleep(tick).await;
-                let (found, text, generating, done_mark) = match self.read_reply().await {
+                let (found, text, generating) = match self.read_reply().await {
                     Ok(v) => {
                         consecutive_errors = 0;
                         v
@@ -890,17 +884,13 @@ impl CdpClient {
                     not_generating_ms += tick.as_millis() as u64;
                 }
 
-                // 完成判定：
-                // - 有正文：generating 为 false 且文本静默 quiet_ms 即可完成。
-                // - 空正文（纯图片回复 / 思考阶段正文未渲染）：generating 是瞬时 DOM
-                //   判定，思考阶段抖动会误报 false，故要求 !generating 连续保持
-                //   quiet_ms 才完成；doneMark（网页免责声明）是直接确认信号。
-                let complete = if text.is_empty() {
-                    found && ((not_generating_ms >= quiet_ms) || done_mark)
-                } else {
-                    !generating && stable_ms >= quiet_ms
-                };
-                if complete {
+                if is_complete(
+                    text.is_empty(),
+                    generating,
+                    stable_ms,
+                    not_generating_ms,
+                    quiet_ms,
+                ) {
                     self.finish(StreamEvent::Done { text }).await;
                     return;
                 }
@@ -911,6 +901,32 @@ impl CdpClient {
             })
             .await;
         });
+    }
+}
+
+/// 本轮回复是否完成。
+///
+/// - 有正文：生成停止且文本静默 quiet_ms 即可；但按钮 DOM 状态可能因窗口被节流
+///   而卡在 generating=true，故再加一个独立于按钮的静默兜底。
+/// - 空正文（纯图片回复 / 正文尚未渲染）：只认 generating 连续静默 quiet_ms；
+///   思考阶段正文恒空但文本"没变"，不能用 stable_ms 判定，否则会误发空 Done。
+///
+/// 不再使用网页免责声明作完成信号：它位于虚拟列表末尾的全局节点，不在单条
+/// 回复内；接续会话时历史声明会让本轮刚发出就误报完成。
+fn is_complete(
+    text_empty: bool,
+    generating: bool,
+    stable_ms: u64,
+    not_generating_ms: u64,
+    quiet_ms: u64,
+) -> bool {
+    if text_empty {
+        not_generating_ms >= quiet_ms
+    } else {
+        // 正常流式生成中文本每 250ms 都在变化，静默 8 秒几乎不可能发生；
+        // 该兜底只依赖文本，不受按钮状态刷新延迟影响。
+        let fallback_ms = (quiet_ms * 4).max(8_000);
+        (!generating && stable_ms >= quiet_ms) || stable_ms >= fallback_ms
     }
 }
 
@@ -985,7 +1001,7 @@ async fn find_page_socket(port: u16) -> Result<String, AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_chat_id;
+    use super::{is_complete, parse_chat_id};
 
     #[test]
     fn parses_chat_id_from_session_url() {
@@ -1002,5 +1018,34 @@ mod tests {
     #[test]
     fn empty_on_homepage() {
         assert_eq!(parse_chat_id("https://chat.deepseek.com/"), "");
+    }
+
+    // 有正文：生成停止且文本静默即可完成。
+    #[test]
+    fn completes_when_generation_stops_and_text_settles() {
+        assert!(is_complete(false, false, 1_000, 0, 900));
+    }
+
+    // 生成中文本尚未静默：不能完成。
+    #[test]
+    fn waits_while_generating() {
+        assert!(!is_complete(false, true, 500, 0, 900));
+    }
+
+    // 核心回归：按钮状态卡在 generating=true 时，长静默兜底必须让本轮收尾，
+    // 否则只能等 180s 超时（网页早已回复完成）。
+    #[test]
+    fn fallback_completes_when_button_state_is_stuck() {
+        assert!(is_complete(false, true, 9_000, 0, 900));
+        assert!(!is_complete(false, true, 7_999, 0, 900));
+    }
+
+    // 空正文：只认 generating 连续静默，不能被长 stable_ms 误触发
+    // （思考阶段正文恒空但文本"没变"，旧逻辑会在此误发空 Done）。
+    #[test]
+    fn empty_reply_waits_for_quiet_generation_not_stable_text() {
+        assert!(!is_complete(true, true, 10_000, 0, 900));
+        assert!(!is_complete(true, false, 10_000, 500, 900));
+        assert!(is_complete(true, false, 0, 1_000, 900));
     }
 }
