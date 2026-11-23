@@ -3,6 +3,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeHtml } from "@tauri-apps/plugin-clipboard-manager";
 import { markdownToHtml } from "../lib/clipboard";
+import { copyAsImage } from "../lib/copy-image";
 import {
   activeSession,
   cancelMessage,
@@ -54,6 +55,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
   const [activeTitle, setActiveTitle] = useState("");
   const [exchangeId, setExchangeId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [pasted, setPasted] = useState(false);
   // 独立窗口整体自动收起秒数；0 表示永不。仅 window 变体生效。
   const [popupHideSecs, setPopupHideSecs] = useState(0);
   // 每次 Alt+Q 唤起 +1，用于重置独立窗口的空闲计时。
@@ -276,6 +278,17 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     }
   };
 
+  const pasteImage = async () => {
+    if (!exchangeId) return;
+    try {
+      await copyAsImage(exchangeId);
+      setPasted(true);
+      window.setTimeout(() => setPasted(false), 1500);
+    } catch (e) {
+      setError(`贴图失败：${errText(e)}`);
+    }
+  };
+
   const openInMain = () => {
     if (!exchangeId) return;
     void emitSelect(exchangeId);
@@ -382,6 +395,14 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
                     <path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none" />
                   </svg>
                   {copied ? "已复制" : "复制"}
+                </button>
+                <button type="button" className="composer-bubble-btn" title="渲染成图片，供 Snipaste 贴图" onClick={() => void pasteImage()}>
+                  <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
+                    <rect x="3" y="5" width="18" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.8" fill="none" />
+                    <circle cx="8.5" cy="10" r="1.5" fill="currentColor" />
+                    <path d="M4 17l5-5 4 4 3-3 4 4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                  </svg>
+                  {pasted ? "已贴图" : "贴图"}
                 </button>
                 <button type="button" className="composer-bubble-btn" onClick={openInMain}>
                   <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">

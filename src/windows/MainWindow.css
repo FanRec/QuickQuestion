@@ -367,11 +367,16 @@
   background: var(--surface);
 }
 
-.detail-copy {
+.detail-actions {
   position: absolute;
   top: 16px;
   right: 28px;
   z-index: 2;
+  display: flex;
+  gap: 8px;
+}
+
+.detail-copy {
   height: 28px;
   padding: 0 12px;
   border-radius: var(--radius-sm);

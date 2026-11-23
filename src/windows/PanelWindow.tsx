@@ -3,6 +3,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeHtml } from "@tauri-apps/plugin-clipboard-manager";
 import { markdownToHtml } from "../lib/clipboard";
+import { copyAsImage } from "../lib/copy-image";
 import { IconButton } from "../components/IconButton";
 import { Composer } from "../components/Composer";
 import { copyMarkdown, deleteExchange, errText, isSending, listExchanges } from "../lib/api";
@@ -193,6 +194,17 @@ export function PanelWindow() {
     } catch (e) {
       setCopiedId(null);
       setCopyError(`复制失败：${errText(e)}`);
+      window.setTimeout(() => setCopyError(null), 4000);
+    }
+  };
+
+  const pasteImage = async (id: string) => {
+    setHistoryMenu(null);
+    try {
+      await copyAsImage(id);
+      setCopyError(null);
+    } catch (e) {
+      setCopyError(`贴图失败：${errText(e)}`);
       window.setTimeout(() => setCopyError(null), 4000);
     }
   };
@@ -416,6 +428,19 @@ export function PanelWindow() {
             </svg>
             查看这条
           </button>
+          <button
+            type="button"
+            className="panel-history-menu-item"
+            onClick={() => void pasteImage(historyMenu.id)}
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+              <rect x="3" y="5" width="18" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.7" fill="none" />
+              <circle cx="8.5" cy="10" r="1.5" fill="currentColor" />
+              <path d="M4 17l5-5 4 4 3-3 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            </svg>
+            复制为图片
+          </button>
+          <div className="panel-history-menu-divider" />
           <button
             type="button"
             className="panel-history-menu-item panel-history-menu-item--danger"

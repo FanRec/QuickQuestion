@@ -7,6 +7,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeHtml, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { markdownToHtml } from "../lib/clipboard";
+import { copyAsImage } from "../lib/copy-image";
 import {
   activeSession,
   cancelMessage,
@@ -295,6 +296,17 @@ export function MainWindow() {
     }
   };
 
+  const pasteImage = async (id: string) => {
+    setMenu(null);
+    try {
+      const image = await copyAsImage(id);
+      setNotice({ text: `已生成图片 ${image.width}×${image.height}`, kind: "ok" });
+      window.setTimeout(() => setNotice(null), 1500);
+    } catch (e) {
+      setNotice({ text: `贴图失败：${errText(e)}`, kind: "error" });
+    }
+  };
+
   // 代码块复制：按钮是渲染进 innerHTML 的真实 button，这里做事件委托。
   const copyCode = (e: React.MouseEvent<HTMLDivElement>) => {
     const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-code-copy]");
@@ -563,14 +575,24 @@ export function MainWindow() {
 
             <main className="main-detail">
               {selected && !streaming && (
-                <button
-                  type="button"
-                  className="detail-copy"
-                  title="复制这条问答（富文本，可直接贴图）"
-                  onClick={() => void copyExchange(selected.id)}
-                >
-                  {notice?.kind === "ok" ? "已复制" : "复制"}
-                </button>
+                <div className="detail-actions">
+                  <button
+                    type="button"
+                    className="detail-copy"
+                    title="复制这条问答（富文本）"
+                    onClick={() => void copyExchange(selected.id)}
+                  >
+                    复制
+                  </button>
+                  <button
+                    type="button"
+                    className="detail-copy"
+                    title="渲染成图片，供 Snipaste 贴图"
+                    onClick={() => void pasteImage(selected.id)}
+                  >
+                    贴图
+                  </button>
+                </div>
               )}
               <div className="detail-scroll" ref={scrollRef}>
                 {streaming && (
@@ -777,6 +799,13 @@ export function MainWindow() {
                 onClick={() => void copyExchange(menu.exchangeId)}
               >
                 复制这条
+              </button>
+              <button
+                type="button"
+                className="ctx-item"
+                onClick={() => void pasteImage(menu.exchangeId)}
+              >
+                复制为图片
               </button>
               <div className="ctx-divider" />
               <button

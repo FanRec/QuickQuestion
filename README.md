@@ -18,7 +18,7 @@
   「＋新会话」一键开新话题。
 - **图片提问**：`Ctrl+V` 直接粘贴截图。
 - **深度思考 / 联网搜索**：开关随提问自动同步到网页端。
-- **富文本复制**：渲染后的 HTML 进剪贴板，Snipaste 等贴图工具可直接贴成图片。
+- **复制与贴图**：「复制」把富文本放进剪贴板；「贴图」把问答渲染成排版精美的 PNG（含代码高亮、公式、吉祥物，跟随主题），供 Snipaste 贴到屏幕阅读。
 - **隐私**：问答与设置全部落在 `%APPDATA%` / `%LOCALAPPDATA%` 本机目录，不上传任何数据。
 
 ## 界面预览
@@ -50,6 +50,10 @@ macOS 首次打开若被拦截，右键 App →「打开」，或执行
 npm install
 npm run tauri dev     # 开发调试
 npm run tauri build   # 产出安装包（NSIS / MSI）
+
+# 调整贴片样式后重生成字体内联模块（KaTeX 升级时也需要）：
+npm run gen:inline-assets
+# 浏览器打开 render-preview.html 可离线预览贴片效果（dev server 下）
 ```
 
 ## 使用

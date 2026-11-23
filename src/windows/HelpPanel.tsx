@@ -122,8 +122,11 @@ export function HelpPanel() {
           <h3 className="help-title">复制与删除</h3>
           <ul className="help-list">
             <li>
-              主窗口右上角、悬浮气泡、历史列表都能复制；复制的是<strong>渲染后的富文本</strong>，
-              Snipaste 可直接贴成图片。
+              <strong>复制</strong>：得到渲染后的富文本，Snipaste 的「贴文本」可贴成图片。
+            </li>
+            <li>
+              <strong>贴图</strong>（历史菜单里叫「复制为图片」）：把问答渲染成一张排版好的 PNG
+              放进剪贴板，再用 Snipaste 贴到屏幕。样式跟随当前主题，图片不可选中文字。
             </li>
             <li>删除单条：在侧边栏的问题上右键 →「删除这条」。</li>
             <li>删除整个会话：在会话标题上右键 →「删除整个会话」。</li>
