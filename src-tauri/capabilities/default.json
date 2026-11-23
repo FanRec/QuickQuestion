@@ -24,6 +24,7 @@
     "core:window:allow-toggle-maximize",
     "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-write-html",
+    "clipboard-manager:allow-write-image",
     "opener:default"
   ]
 }

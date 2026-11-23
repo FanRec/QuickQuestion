@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>贴片渲染预览（仅开发用，不进入构建）</title>
+<style>
+body{margin:0;padding:24px;background:#16151d;color:#f2f1f7;font:14px/1.6 "Segoe UI",sans-serif}
+button{background:#7c5ce8;color:#fff;border:0;border-radius:8px;padding:8px 16px;cursor:pointer;margin-right:8px}
+button:nth-child(2){background:#444}
+img{display:block;max-width:100%;margin-top:20px;border-radius:8px}
+#status{margin-top:12px;color:#a78bfa}
+</style>
+</head>
+<body>
+<button id="light">渲染浅色</button>
+<button id="dark">渲染深色</button>
+<button id="download">下载 PNG</button>
+<div id="status"></div>
+<img id="preview" alt="贴片预览">
+
+<script type="text/plain" id="sample-question">爱的表达式</script>
+<script type="text/plain" id="sample-answer">爱的表达式，小猫老师给你最直接的：
+
+## 最直接的表达
+
+翻译：**只有你返回 1，别人全是 0。喵。**
+
+```python
+love = lambda x: 1 if x == "你" else 0
+print(love("你"))    # 1
+print(love("别人"))  # 0
+```
+
+## 极限版
+
+意思是：每天分你一半，分到无穷天，就是全部。
+
+$$
+\lim_{n \to \infty} \sum_{k=1}^{n} \frac{1}{2^k} = 1
+$$
+</script>
+
+<script type="module">
+import { markdownToPng } from "./src/lib/render-image.ts";
+const q = document.getElementById("sample-question").textContent;
+const a = document.getElementById("sample-answer").textContent;
+const status = document.getElementById("status");
+const preview = document.getElementById("preview");
+let last = null;
+async function render(theme) {
+  status.textContent = "渲染中…";
+  try {
+    last = await markdownToPng(q, a, theme);
+    if (preview.src.startsWith("blob:")) URL.revokeObjectURL(preview.src);
+    preview.src = URL.createObjectURL(new Blob([last.bytes], { type: "image/png" }));
+    status.textContent = `完成：${last.width}×${last.height}，${Math.round(last.bytes.length / 1024)} KB`;
+  } catch (e) {
+    status.textContent = `失败：${e.message}`;
+    console.error(e);
+  }
+}
+document.getElementById("light").onclick = () => render("light");
+document.getElementById("dark").onclick = () => render("dark");
+document.getElementById("download").onclick = () => {
+  if (!last) return;
+  const a2 = document.createElement("a");
+  a2.href = URL.createObjectURL(new Blob([last.bytes], { type: "image/png" }));
+  a2.download = `card-${last.width}x${last.height}.png`;
+  a2.click();
+};
+window.__renderCard = render;
+render(document.location.hash === "#dark" ? "dark" : "light");
+</script>
+</body>
+</html>
