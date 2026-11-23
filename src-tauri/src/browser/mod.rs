@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use crate::AppError;
 
-pub const DEFAULT_PORT: u16 = 9222;
 const DEEPSEEK_URL: &str = "https://chat.deepseek.com";
 
 /// 管理专用 Edge/Chrome 进程。持有子进程句柄，应用退出时回收。

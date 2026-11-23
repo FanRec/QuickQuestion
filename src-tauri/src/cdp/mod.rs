@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -24,9 +23,8 @@ fn parse_chat_id(url: &str) -> String {
         .to_string()
 }
 
-/// 页面流式事件：由注入脚本经 CDP binding 推送，再经 mpsc 转给命令层。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+/// 页面流式事件：由 Rust 轮询器经 mpsc 转给命令层，再由命令层构造前端载荷。
+#[derive(Debug, Clone)]
 pub enum StreamEvent {
     Delta { text: String },
     Done { text: String },
@@ -358,10 +356,6 @@ impl CdpClient {
             }
         }
         Ok(client)
-    }
-
-    pub fn port(&self) -> u16 {
-        self.port
     }
 
     async fn call(&self, method: &str, params: Value) -> Result<Value, AppError> {
@@ -751,7 +745,7 @@ impl CdpClient {
 
         // 复用写入阶段记住的输入框，确保 Enter 派发给刚写入 text 的同一个元素；
         // 页面导航或元素失效时回退到可见输入框探测，避免 NO_INPUT 后静默卡住。
-        self.evaluate(
+        let enter = self.evaluate(
             r#"(function(){
               var el = window.__qqInput;
               if (!el || !el.isConnected) {{
@@ -780,6 +774,11 @@ impl CdpClient {
             })()"#,
         )
         .await?;
+        if enter.trim() != "OK" {
+            return Err(AppError::msg(
+                "无法向 DeepSeek 输入框派发 Enter，页面结构可能已变化。",
+            ));
+        }
         Ok(())
     }
 

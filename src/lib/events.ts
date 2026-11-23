@@ -60,7 +60,7 @@ export function emitSelect(id: string) {
 }
 
 /// 网页当前所在会话发生变化（切会话 / 发消息后绑定成功）。
-export type ActivePayload = { sessionId: string; chatId: string; title: string };
+export type ActivePayload = { sessionId: string; title: string };
 
 export function onActive(handler: (payload: ActivePayload) => void, signal?: AbortSignal) {
   return guarded<ActivePayload>("qq://active", handler, signal);

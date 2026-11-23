@@ -63,17 +63,8 @@ export function isSending(): Promise<boolean> {
   return invoke<boolean>("is_sending");
 }
 
-/// 新建会话：会同时在网页端开一个新对话。
-export function createSession(title?: string): Promise<Session> {
-  return invoke<Session>("create_session", { title: title ?? null });
-}
-
 export function deleteSession(id: string): Promise<void> {
   return invoke<void>("delete_session", { id });
-}
-
-export function getExchange(id: string): Promise<Exchange | null> {
-  return invoke<Exchange | null>("get_exchange", { id });
 }
 
 export function deleteExchange(id: string): Promise<void> {

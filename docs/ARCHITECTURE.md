@@ -15,11 +15,10 @@
 ┌──────────────────────▼───────────────────────────────────┐
 │  Tauri IPC 命令层 (commands/)                            │
 │  send_message · cancel_message · is_sending              │
-│  list_exchanges · list_sessions · create_session         │
-│  active_session · remember_session · delete_session      │
-│  get_exchange · delete_exchange · copy_markdown          │
-│  save_temp_image · open_login_window · browser_status    │
-│  get_settings · update_settings · ping                   │
+│  list_exchanges · list_sessions · active_session         │
+│  remember_session · delete_session · delete_exchange     │
+│  copy_markdown · save_temp_image · open_login_window     │
+│  browser_status · get_settings · update_settings · ping  │
 └──────────────────────┬───────────────────────────────────┘
 ┌──────────────────────▼───────────────────────────────────┐
 │  Rust 内核 (src-tauri/src/)                              │
@@ -74,12 +73,12 @@ struct Exchange {
          - 有绑定 → 网页导航到对应 chat，接续上下文
       4. cdp::send：
          a. apply_modes 同步「深度思考/智能搜索」开关（导航后 DOM 重建，必须后置）
-         b. subscribe 先装订阅者再发送，防事件丢失
+         b. subscribe 安装 mpsc 订阅者再发送，防事件丢失
          c. 上传图片（DOM.setFileInputFiles）、写入输入框、派发 Enter
          d. 给现有 .ds-message 打标，记录发出的文本作为新回复的身份锚点
       5. spawn_reply_poller 每 250ms 读一次新回复：
          - 增量 → emit("qq://stream", {type:"delta", exchangeId, text})
-         - 完成 = 网页停止生成（或出现免责声明）且文本静默 quiet_ms
+         - 完成 = 生成停止且文本静默 quiet_ms；按钮状态卡住时由独立静默兜底
          - 完成 → 落库 → emit done；失败 → emit error（kind=loginRequired 等）
       6. 前端按 exchangeId 认领本窗口/本实例的事件，全局广播互不串扰
 ```

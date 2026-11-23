@@ -180,17 +180,6 @@ impl SqliteStore {
         }
     }
 
-    /// 把本地会话绑定到网页会话 UUID。
-    pub fn bind_chat_id(&self, session_id: &str, chat_id: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE sessions SET deepseek_chat_id = ?2 WHERE id = ?1",
-            params![session_id, chat_id],
-        )
-        .map_err(|e| AppError::msg(format!("绑定网页会话失败：{e}")))?;
-        Ok(())
-    }
-
     /// 删除会话及其全部问答。两步同事务：中途失败不会留下"会话没了、问答还在"的孤儿。
     pub fn delete_session(&self, id: &str) -> Result<(), AppError> {
         let mut conn = self.conn.lock().unwrap();
@@ -257,34 +246,6 @@ impl SqliteStore {
         }
         tx.commit()
             .map_err(|e| AppError::msg(format!("提交问答失败：{e}")))?;
-        Ok(())
-    }
-
-    pub fn add(&self, exchange: &Exchange) -> Result<(), AppError> {
-        let images = serde_json::to_string(&exchange.image_names)
-            .map_err(|e| AppError::msg(format!("图片列表编码失败：{e}")))?;
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO exchanges (id, session_id, created_at, question_text, answer_text, image_names)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                exchange.id,
-                exchange.session_id,
-                exchange.created_at,
-                exchange.question_text,
-                exchange.answer_text,
-                images
-            ],
-        )
-        .map_err(|e| AppError::msg(format!("保存问答失败：{e}")))?;
-        // 会话按最近活动排序；标题在该会话第一条问答时补上。
-        conn.execute(
-            "UPDATE sessions SET updated_at = ?2,
-                title = CASE WHEN title = '新会话' THEN substr(?3, 1, 28) ELSE title END
-             WHERE id = ?1",
-            params![exchange.session_id, exchange.created_at, exchange.question_text],
-        )
-        .map_err(|e| AppError::msg(format!("更新会话失败：{e}")))?;
         Ok(())
     }
 
@@ -440,13 +401,13 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_add_list_get_delete() {
+    fn sqlite_commit_list_get_delete() {
         let store = memory_store();
         let session = store.create_session("新会话").unwrap();
         let mut ex = sample(vec![]);
         ex.id = "abc".into();
         ex.session_id = session.id.clone();
-        store.add(&ex).unwrap();
+        store.commit_exchange(&ex, "").unwrap();
 
         assert_eq!(store.list().unwrap().len(), 1);
         assert_eq!(store.list_by_session(&session.id).unwrap().len(), 1);
@@ -471,8 +432,8 @@ mod tests {
         let mut two = sample(vec![]);
         two.id = "2".into();
         two.session_id = b.id.clone();
-        store.add(&one).unwrap();
-        store.add(&two).unwrap();
+        store.commit_exchange(&one, "").unwrap();
+        store.commit_exchange(&two, "").unwrap();
 
         store.delete_session(&a.id).unwrap();
         assert_eq!(store.list_sessions().unwrap().len(), 1);
@@ -492,8 +453,8 @@ mod tests {
         newer.id = "new".into();
         newer.session_id = s.id.clone();
         newer.created_at = 200;
-        store.add(&older).unwrap();
-        store.add(&newer).unwrap();
+        store.commit_exchange(&older, "").unwrap();
+        store.commit_exchange(&newer, "").unwrap();
 
         let list = store.list().unwrap();
         assert_eq!(list[0].id, "new");

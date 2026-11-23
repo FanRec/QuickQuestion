@@ -28,12 +28,6 @@ export async function showWindow(label: WindowLabel) {
   await win.setFocus();
 }
 
-export async function hideWindow(label: WindowLabel) {
-  const win = await WebviewWindow.getByLabel(label);
-  if (!win) return;
-  await win.hide();
-}
-
 /// 窗口几何操作按窗口串行化：每步都是"读位置 → 写尺寸 → 写位置"的多段
 /// IPC，并发执行会读到中间态（新尺寸 + 旧位置），锚点算错导致球/输入条漂移。
 /// 触发源众多（形态切换、内容高度上报、Alt+Q 唤起），靠调用方自觉没用，这里统一排队。

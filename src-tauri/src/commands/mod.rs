@@ -19,9 +19,8 @@ pub fn ping() -> String {
 #[tauri::command]
 pub async fn browser_status(state: State<'_, Arc<AppState>>) -> Result<BrowserStatus, AppError> {
     let cdp = state.ensure_cdp().await?;
-    let page_url = cdp.current_url().await.unwrap_or_default();
-    let input_ready = cdp.input_ready().await.unwrap_or(false);
-    let (needs_login, login_reason, _, _) = cdp
+    // login_state 已一次返回四项：复用它，避免 current_url + input_ready 两次额外 CDP 往返。
+    let (needs_login, login_reason, page_url, input_ready) = cdp
         .login_state()
         .await
         .unwrap_or((false, String::new(), String::new(), false));
@@ -271,7 +270,6 @@ async fn send_inner(
                         "qq://active",
                         serde_json::json!({
                             "sessionId": session_for_task,
-                            "chatId": chat_id,
                             "title": active_title,
                         }),
                     );
@@ -353,16 +351,6 @@ pub fn list_sessions(state: State<'_, Arc<AppState>>) -> Result<Vec<Session>, Ap
     state.store.list_sessions()
 }
 
-/// 新建本地会话。网页端的会话切换统一由 send_message 编排，
-/// 这里不碰网页——否则会出现"本地建了、网页没切"的错位。
-#[tauri::command]
-pub fn create_session(
-    state: State<'_, Arc<AppState>>,
-    title: Option<String>,
-) -> Result<Session, AppError> {
-    state.store.create_session(title.as_deref().unwrap_or("新会话"))
-}
-
 /// 是否正在回复中。悬浮球据此决定要不要让位给独立输入条。
 #[tauri::command]
 pub fn is_sending(state: State<'_, Arc<AppState>>) -> bool {
@@ -407,12 +395,6 @@ pub fn remember_session(state: State<'_, Arc<AppState>>, id: String) -> Result<(
 #[tauri::command]
 pub fn delete_session(state: State<'_, Arc<AppState>>, id: String) -> Result<(), AppError> {
     state.store.delete_session(&id)
-}
-
-/// 获取单条问答详情。
-#[tauri::command]
-pub fn get_exchange(state: State<'_, Arc<AppState>>, id: String) -> Result<Option<Exchange>, AppError> {
-    state.store.get(&id)
 }
 
 /// 删除一条问答。
