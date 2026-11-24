@@ -204,24 +204,25 @@
 .composer-bubble-actions {
   flex: none;
   display: flex;
-  flex-wrap: wrap;
   align-items: flex-end;
-  justify-content: space-between;
-  gap: 8px;
   margin-top: 10px;
+  min-height: 26px;
 }
 
 .composer-bubble-btns {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
+  /* 给右下角吉祥物留出位置，避免三个按钮挤压它换行 */
+  margin-right: 72px;
 }
 
 .composer-bubble-mascot {
-  flex: none;
+  position: absolute;
+  right: -2px;
+  bottom: -10px;
   width: 78px;
   height: auto;
-  margin: -26px -4px -14px 0;
   pointer-events: none;
   user-select: none;
 }
