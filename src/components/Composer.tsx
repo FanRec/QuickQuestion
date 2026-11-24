@@ -56,6 +56,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
   const [exchangeId, setExchangeId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [pasted, setPasted] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [pasteFailed, setPasteFailed] = useState(false);
   // 独立窗口整体自动收起秒数；0 表示永不。仅 window 变体生效。
   const [popupHideSecs, setPopupHideSecs] = useState(0);
@@ -272,10 +273,13 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     try {
       const markdown = await copyMarkdown(exchangeId);
       await writeHtml(markdownToHtml(markdown), markdown);
+      setCopyFailed(false);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
-    } catch (e) {
-      setError(`复制失败：${errText(e)}`);
+    } catch {
+      // 同贴图：不写 setError，避免把当前回答替换成错误态、隐藏操作按钮。
+      setCopyFailed(true);
+      window.setTimeout(() => setCopyFailed(false), 2500);
     }
   };
 
@@ -283,6 +287,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     if (!exchangeId) return;
     try {
       await copyAsImage(exchangeId);
+      setPasteFailed(false);
       setPasted(true);
       window.setTimeout(() => setPasted(false), 1500);
     } catch {
@@ -393,12 +398,17 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
           {!error && exchangeId && (
             <div className="composer-bubble-actions">
               <div className="composer-bubble-btns">
-                <button type="button" className="composer-bubble-btn" onClick={() => void copyAnswer()}>
+                <button
+                  type="button"
+                  className={`composer-bubble-btn${copyFailed ? " composer-bubble-btn--error" : ""}`}
+                  title={copyFailed ? "复制失败，可重试" : "复制富文本"}
+                  onClick={() => void copyAnswer()}
+                >
                   <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
                     <rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.8" fill="none" />
                     <path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none" />
                   </svg>
-                  {copied ? "已复制" : "复制"}
+                  {copyFailed ? "失败" : copied ? "已复制" : "复制"}
                 </button>
                 <button
                   type="button"

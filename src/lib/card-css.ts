@@ -91,6 +91,10 @@ body{margin:0}
 .qq-content>.qq-title+p{margin-top:2px;color:${t.muted};font-size:21px}
 .qq-content p{margin:10px 0}
 .qq-content strong{color:${t.title};font-weight:700}
+.qq-content :not(pre)>code{
+  padding:2px 6px;border-radius:5px;background:${t.codeBg};
+  color:${t.codeText};font:17px/1.5 Consolas,"SF Mono",monospace;
+}
 .qq-content a{color:${t.accent};text-decoration:none}
 .qq-content ul,.qq-content ol{padding-left:30px;margin:12px 0}
 .qq-content li{margin:4px 0}
