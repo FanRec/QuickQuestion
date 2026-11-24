@@ -4,12 +4,6 @@ import hljs from "highlight.js/lib/common";
 import { buildCardCss, cardDecorColor, type CardTheme } from "./card-css";
 import { KATEX_CSS_INLINE, MASCOT_DATA_URI } from "./inline-assets";
 
-const COPY_ICON =
-  '<svg class="qq-code-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" ' +
-  'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
-  '<rect x="8" y="8" width="12" height="12" rx="2.5"/>' +
-  '<path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2"/></svg>';
-
 const TOP_DECOR = `<svg class="qq-decor-top" viewBox="0 0 290 150" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
 <g fill="none" stroke="var(--qq-decor)" stroke-width="2" stroke-linecap="round">
 <path d="M6 144C70 130 122 106 178 42"/><path d="M38 146C116 138 190 110 284 44"/><path d="M118 132C176 124 226 104 272 70"/>
@@ -20,11 +14,13 @@ const TOP_DECOR = `<svg class="qq-decor-top" viewBox="0 0 290 150" xmlns="http:/
 <g transform="translate(284,44)" opacity=".7"><ellipse cx="0" cy="-7" rx="4" ry="7"/><ellipse cx="0" cy="-7" rx="4" ry="7" transform="rotate(72)"/><ellipse cx="0" cy="-7" rx="4" ry="7" transform="rotate(144)"/><ellipse cx="0" cy="-7" rx="4" ry="7" transform="rotate(216)"/><ellipse cx="0" cy="-7" rx="4" ry="7" transform="rotate(288)"/></g>
 </g></svg>`;
 
-const BOTTOM_DECOR = `<svg class="qq-decor-bottom" viewBox="0 0 430 130" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-<path d="M0 130V88C40 58 80 66 118 92C160 120 200 96 240 78C290 54 340 76 430 100V130Z" fill="var(--qq-decor)" opacity=".42"/>
-<path d="M0 130V104C60 84 100 104 150 118C210 134 280 108 340 106C380 104 410 116 430 120V130Z" fill="var(--qq-decor)" opacity=".28"/>
+// 波浪必须铺满卡片全宽（760px）。原先固定 430px，右侧留下断层。
+// 吉祥物在 DOM 中排在波浪之后、层级更高，会自然叠在连续波浪上。
+const BOTTOM_DECOR = `<svg class="qq-decor-bottom" viewBox="0 0 760 130" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" aria-hidden="true">
+<path d="M0 130V88C40 58 80 66 118 92C160 120 200 96 240 78C300 52 360 70 430 92C490 110 550 78 620 72C680 66 720 90 760 84V130Z" fill="var(--qq-decor)" opacity=".42"/>
+<path d="M0 130V104C60 84 100 104 150 118C210 134 280 108 340 106C400 104 450 122 520 116C590 110 650 100 700 112C730 118 748 112 760 116V130Z" fill="var(--qq-decor)" opacity=".28"/>
 <path d="M76 58l6 16 16 6-16 6-6 16-6-16-16-6 16-6z" fill="#fff" opacity=".9"/>
-<path d="M196 96l4 10 10 4-10 4-4 10-4-10-10-4 10-4z" fill="#fff" opacity=".75"/>
+<path d="M470 96l4 10 10 4-10 4-4 10-4-10-10-4 10-4z" fill="#fff" opacity=".75"/>
 </svg>`;
 
 function escapeText(s: string): string {
@@ -73,7 +69,7 @@ md.renderer.rules.fence = (tokens, idx) => {
     .split("\n")
     .map((_, i) => `<span>${i + 1}</span>`)
     .join("");
-  return `<div class="qq-code"><div class="qq-code-gutter">${gutter}</div><pre><code>${body}</code></pre>${COPY_ICON}</div>`;
+  return `<div class="qq-code"><div class="qq-code-gutter">${gutter}</div><pre><code>${body}</code></pre></div>`;
 };
 
 md.renderer.rules.blockquote_open = () => '<blockquote class="qq-quote">';

@@ -204,6 +204,7 @@
 .composer-bubble-actions {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
   gap: 8px;
@@ -212,6 +213,7 @@
 
 .composer-bubble-btns {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -226,6 +228,8 @@
 
 .composer-bubble-btn {
   display: inline-flex;
+  flex: none;
+  white-space: nowrap;
   align-items: center;
   gap: 5px;
   height: 26px;

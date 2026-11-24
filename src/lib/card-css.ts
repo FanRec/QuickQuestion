@@ -127,7 +127,6 @@ body{margin:0}
   flex:1;margin:0;overflow:visible;white-space:pre-wrap;word-break:break-word;
   font:18px/1.7 Consolas,"SF Mono",monospace;color:${t.codeText};
 }
-.qq-code-icon{position:absolute;right:20px;top:18px;opacity:.55}
 .katex-display{margin:18px 0;padding:16px 24px;border-radius:20px;background:${t.codeBg};overflow:visible;font-size:1.24em}
 .hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-operator{color:${t.accent};font-weight:600}
 .hljs-string,.hljs-attr,.hljs-regexp,.hljs-addition{color:#16a34a}
@@ -137,7 +136,7 @@ body{margin:0}
 .hljs-variable,.hljs-template-variable,.hljs-params{color:#db2777}
 .hljs-type,.hljs-class .hljs-title,.hljs-tag{color:#0ea5e9}
 .qq-decor-top{position:absolute;right:8px;top:26px;width:290px;pointer-events:none}
-.qq-decor-bottom{position:absolute;left:0;bottom:0;width:430px;pointer-events:none}
+.qq-decor-bottom{position:absolute;left:0;bottom:0;width:100%;height:130px;pointer-events:none}
 .qq-mascot{
   position:absolute;right:8px;bottom:-8px;width:270px;
   pointer-events:none;user-select:none;
