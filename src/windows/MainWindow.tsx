@@ -78,6 +78,7 @@ export function MainWindow() {
   const [newSession, setNewSession] = useState(false);
 
   const streamingRef = useRef(false);
+  const noticeTimerRef = useRef<number | undefined>(undefined);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // 后端 stream 是全局广播：只接受本窗口这一轮的 exchangeId。
@@ -284,15 +285,21 @@ export function MainWindow() {
     }
   };
 
+  // 单一 notice 配单一 timer：连续复制/贴图时旧的清零不能提前抹掉新提示。
+  const flashNotice = (text: string, kind: "ok" | "error") => {
+    window.clearTimeout(noticeTimerRef.current);
+    setNotice({ text, kind });
+    noticeTimerRef.current = window.setTimeout(() => setNotice(null), kind === "ok" ? 1500 : 4000);
+  };
+
   const copyExchange = async (id: string) => {
     setMenu(null);
     try {
       const markdown = await copyMarkdown(id);
       await writeHtml(markdownToHtml(markdown), markdown);
-      setNotice({ text: "已复制", kind: "ok" });
-      window.setTimeout(() => setNotice(null), 1500);
+      flashNotice("已复制", "ok");
     } catch (e) {
-      setNotice({ text: `复制失败：${errText(e)}`, kind: "error" });
+      flashNotice(`复制失败：${errText(e)}`, "error");
     }
   };
 
@@ -300,10 +307,9 @@ export function MainWindow() {
     setMenu(null);
     try {
       const image = await copyAsImage(id);
-      setNotice({ text: `已生成图片 ${image.width}×${image.height}`, kind: "ok" });
-      window.setTimeout(() => setNotice(null), 1500);
+      flashNotice(`已生成图片 ${image.width}×${image.height}`, "ok");
     } catch (e) {
-      setNotice({ text: `贴图失败：${errText(e)}`, kind: "error" });
+      flashNotice(`贴图失败：${errText(e)}`, "error");
     }
   };
 

@@ -106,6 +106,9 @@ body{margin:0}
 }
 .qq-section-title{flex:none;font-size:25px;font-weight:700;color:${t.title}}
 .qq-section-rule{flex:1;height:2px;background:${t.rule}}
+.qq-heading1{
+  margin:30px 0 14px;font-size:28px;font-weight:700;color:${t.title};line-height:1.5;
+}
 .qq-subhead{
   margin:26px 0 10px;padding-left:17px;border-left:6px solid ${t.accent};
   font-size:22px;font-weight:700;color:${t.title};line-height:1.5;
@@ -116,16 +119,16 @@ body{margin:0}
 }
 .qq-quote p{margin:0}
 .qq-code{
-  position:relative;display:flex;margin:20px 0 26px;padding:20px 26px;
+  margin:20px 0 26px;padding:20px 26px;
   border-radius:18px;background:${t.codeBg};
 }
-.qq-code-gutter{
-  flex:none;width:36px;margin-right:18px;display:flex;flex-direction:column;text-align:right;
-  color:${t.gutter};font:18px/1.7 Consolas,"SF Mono",monospace;user-select:none;
+.qq-code-line{display:flex;align-items:flex-start;font:18px/1.7 Consolas,"SF Mono",monospace}
+.qq-code-no{
+  flex:none;width:36px;margin-right:18px;text-align:right;
+  color:${t.gutter};user-select:none;
 }
-.qq-code pre{
-  flex:1;margin:0;overflow:visible;white-space:pre-wrap;word-break:break-word;
-  font:18px/1.7 Consolas,"SF Mono",monospace;color:${t.codeText};
+.qq-code-text{
+  flex:1;min-width:0;white-space:pre-wrap;word-break:break-word;color:${t.codeText};
 }
 .katex-display{margin:18px 0;padding:16px 24px;border-radius:20px;background:${t.codeBg};overflow:visible;font-size:1.24em}
 .hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-operator{color:${t.accent};font-weight:600}

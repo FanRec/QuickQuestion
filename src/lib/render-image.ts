@@ -42,14 +42,16 @@ md.renderer.rules.heading_open = (tokens, idx, _options, env) => {
     state.sectionNo += 1;
     return `<div class="qq-section"><span class="qq-section-no">${state.sectionNo}</span><span class="qq-section-title">`;
   }
-  if (tag === "h3") return '<div class="qq-subhead">';
+  // 回答里的 # 与问题主标题同级语义，用独立类避免混淆；h3~h6 统一为小节。
+  if (tag === "h1") return '<div class="qq-heading1">';
+  if (tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6") return '<div class="qq-subhead">';
   return "";
 };
 
 md.renderer.rules.heading_close = (tokens, idx) => {
   const tag = tokens[idx].tag;
   if (tag === "h2") return '</span><span class="qq-section-rule"></span></div>';
-  if (tag === "h3") return "</div>";
+  if (tag === "h1" || tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6") return "</div>";
   return "";
 };
 
@@ -57,19 +59,23 @@ md.renderer.rules.fence = (tokens, idx) => {
   const token = tokens[idx];
   const lang = token.info.trim().split(/\s+/)[0] ?? "";
   const code = token.content.replace(/\n$/, "");
-  let body: string;
-  try {
-    body = lang && hljs.getLanguage(lang)
-      ? hljs.highlight(code, { language: lang, ignoreIllegals: true }).value
-      : escapeText(code);
-  } catch {
-    body = escapeText(code);
-  }
-  const gutter = code
-    .split("\n")
-    .map((_, i) => `<span>${i + 1}</span>`)
+  // 行号与代码放在同一 flex 行：pre-wrap 折行时行号固定在行首，不会与后续行错位。
+  // 逐行高亮，避免按字符串切行把 hljs 的 <span> 标签切断。
+  const lines = code.split("\n");
+  const rows = lines
+    .map((line, i) => {
+      let html: string;
+      try {
+        html = lang && hljs.getLanguage(lang)
+          ? hljs.highlight(line, { language: lang, ignoreIllegals: true }).value
+          : escapeText(line);
+      } catch {
+        html = escapeText(line);
+      }
+      return `<div class="qq-code-line"><span class="qq-code-no">${i + 1}</span><span class="qq-code-text">${html || "&nbsp;"}</span></div>`;
+    })
     .join("");
-  return `<div class="qq-code"><div class="qq-code-gutter">${gutter}</div><pre><code>${body}</code></pre></div>`;
+  return `<div class="qq-code">${rows}</div>`;
 };
 
 md.renderer.rules.blockquote_open = () => '<blockquote class="qq-quote">';

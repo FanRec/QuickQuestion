@@ -56,6 +56,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
   const [exchangeId, setExchangeId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [pasted, setPasted] = useState(false);
+  const [pasteFailed, setPasteFailed] = useState(false);
   // 独立窗口整体自动收起秒数；0 表示永不。仅 window 变体生效。
   const [popupHideSecs, setPopupHideSecs] = useState(0);
   // 每次 Alt+Q 唤起 +1，用于重置独立窗口的空闲计时。
@@ -284,8 +285,11 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
       await copyAsImage(exchangeId);
       setPasted(true);
       window.setTimeout(() => setPasted(false), 1500);
-    } catch (e) {
-      setError(`贴图失败：${errText(e)}`);
+    } catch {
+      // 不写 setError：那会把当前回答替换成错误态、隐藏操作按钮，
+      // 用户连重试都做不到。只在按钮上短暂提示。
+      setPasteFailed(true);
+      window.setTimeout(() => setPasteFailed(false), 2500);
     }
   };
 
@@ -396,13 +400,18 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
                   </svg>
                   {copied ? "已复制" : "复制"}
                 </button>
-                <button type="button" className="composer-bubble-btn" title="渲染成图片，供 Snipaste 贴图" onClick={() => void pasteImage()}>
+                <button
+                  type="button"
+                  className={`composer-bubble-btn${pasteFailed ? " composer-bubble-btn--error" : ""}`}
+                  title={pasteFailed ? "贴图失败，可重试" : "渲染成图片，供 Snipaste 贴图"}
+                  onClick={() => void pasteImage()}
+                >
                   <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
                     <rect x="3" y="5" width="18" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.8" fill="none" />
                     <circle cx="8.5" cy="10" r="1.5" fill="currentColor" />
                     <path d="M4 17l5-5 4 4 3-3 4 4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" fill="none" />
                   </svg>
-                  {pasted ? "已贴图" : "贴图"}
+                  {pasteFailed ? "失败" : pasted ? "已贴图" : "贴图"}
                 </button>
                 <button type="button" className="composer-bubble-btn" onClick={openInMain}>
                   <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">

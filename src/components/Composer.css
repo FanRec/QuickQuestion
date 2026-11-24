@@ -248,6 +248,11 @@
   border-color: var(--accent);
 }
 
+.composer-bubble-btn--error {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 .composer-login-btn {
   align-self: flex-start;
   margin-top: 8px;

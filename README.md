@@ -53,7 +53,7 @@ npm run tauri build   # 产出安装包（NSIS / MSI）
 
 # 调整贴片样式后重生成字体内联模块（KaTeX 升级时也需要）：
 npm run gen:inline-assets
-# 浏览器打开 render-preview.html 可离线预览贴片效果（dev server 下）
+# npm run dev 后浏览器访问 /render-preview.html 可预览贴片效果（需经 Vite，裸打开无效）
 ```
 
 ## 使用
