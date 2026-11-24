@@ -1,6 +1,6 @@
 [package]
 name = "quickquestion"
-version = "0.1.0"
+version = "0.1.1"
 description = "QuickQuestion - desktop floating AI Q&A"
 license = "MIT"
 authors = ["FanRec"]
