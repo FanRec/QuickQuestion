@@ -105,13 +105,15 @@ export async function markdownToPng(
     "</div></div>";
 
   const css = buildCardCss(theme) + "\n" + KATEX_CSS_INLINE;
-  // holder 本身不带样式：序列化它才不会把离屏定位带进 SVG。
+  // 样式必须放进 shadow root 隔离：<style> 挂在 document.body 下会全局生效，
+  // 卡片的 * / body / .katex-display 规则会污染主窗口（点击瞬间闪一下）。
+  // shadow 内的样式只作用于影子树，XMLSerializer 序列化 holder 仍带上完整 CSS。
   const holder = document.createElement("div");
   holder.innerHTML = `<style>${css}</style>${bodyHtml}`;
   const offscreen = document.createElement("div");
   offscreen.style.cssText =
     "position:fixed;left:-20000px;top:0;width:800px;visibility:hidden;pointer-events:none";
-  offscreen.appendChild(holder);
+  offscreen.attachShadow({ mode: "open" }).appendChild(holder);
   document.body.appendChild(offscreen);
 
   try {
