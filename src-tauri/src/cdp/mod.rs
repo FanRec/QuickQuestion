@@ -111,9 +111,22 @@ fn mark_reply_js(msg_json: &str) -> String {
     format!(
         r#"
 (function () {{
+  function norm(s) {{ return (s || '').replace(/\s+/g, ' ').trim(); }}
   window.__qqSentText = {msg_json};
   var list = document.querySelectorAll('.ds-message');
-  for (var i = 0; i < list.length; i++) list[i].setAttribute('data-qq-prev', '1');
+  // 发送前快照：位置（属性）+ 文本。属性单独不够——旧消息懒加载进 DOM 时本来就没有它，
+  // 节点重挂载也会丢，读回复时必须能区分"发送前就存在"与"本轮新增"。
+  var texts = [];
+  var lastAnswer = '';
+  for (var i = 0; i < list.length; i++) {{
+    list[i].setAttribute('data-qq-prev', '1');
+    texts.push(norm(list[i].innerText));
+    if (list[i].querySelector('.ds-assistant-message-main-content')) {{
+      lastAnswer = norm(list[i].innerText);
+    }}
+  }}
+  window.__qqPrevTexts = texts;
+  window.__qqPrevAnswer = lastAnswer;
   return String(list.length);
 }})()
 "#,
@@ -138,33 +151,61 @@ const READ_REPLY_JS: &str = r#"
     return false;
   }
 
-  // 身份锚点：刚发出的用户消息没打标，且文本与 window.__qqSentText 一致；
-  // 它的下一个 .ds-message 才是本轮助手回复。只靠"最后一个未打标"不够，
-  // 联网阶段旧消息懒加载时也会变成未打标。
-  var box = null;
+  function norm(s) { return (s || '').replace(/\s+/g, ' ').trim(); }
+
   var list = document.querySelectorAll('.ds-message');
+  var generating = generatingNow();
+  // "还没读到本轮回复"的统一出口：调用方据此继续等。
+  var miss = JSON.stringify({ found: false, text: '', generating: generating });
+
+  // 发送前快照（见 mark_reply_js）：属性标记给出位置边界，文本快照用于标记全丢时
+  // 判断"这条是不是发送后才出现的"。
+  var prevTexts = window.__qqPrevTexts || [];
+  var prevAnswer = window.__qqPrevAnswer || '';
+  var lastPrev = -1;
   for (var i = 0; i < list.length; i++) {
-    if (list[i].hasAttribute('data-qq-prev')) continue;
-    var t = (list[i].innerText || '').trim();
-    if (window.__qqSentText && t.indexOf(window.__qqSentText) >= 0) {
-      var n = list[i].nextElementSibling;
-      while (n && !n.querySelector('.ds-assistant-message-main-content')) n = n.nextElementSibling;
-      if (n) box = n;
+    if (list[i].hasAttribute('data-qq-prev')) lastPrev = i;
+  }
+  function isNew(idx) {
+    if (lastPrev >= 0) return idx > lastPrev;
+    return prevTexts.indexOf(norm(list[idx].innerText)) < 0;
+  }
+
+  var box = null;
+  var sent = norm(window.__qqSentText);
+  if (sent) {
+    // 身份锚点 = 本轮刚发出的用户消息：位置在所有发送前节点之后，文本含发出内容。
+    // 文本先按空白归一再做子串比对——页面 innerText 会把换行折叠、长问题也可能被
+    // 截断，逐字全等必然失配，失配就会退化去"猜"，那正是闪出上一条答案的来源。
+    var probe = sent.length > 40 ? sent.slice(0, 40) : sent;
+    var anchor = -1;
+    for (var j = list.length - 1; j >= 0; j--) {
+      if (list[j].querySelector('.ds-assistant-message-main-content')) continue;
+      if (!isNew(j)) continue;
+      if (norm(list[j].innerText).indexOf(probe) < 0) continue;
+      anchor = j;
+      break;
+    }
+    // 锚点还没出现 = 本轮用户消息尚未挂载。**绝不退回"最后一条未打标"**：
+    // 那只证明发送时它不存在，不能证明它是本轮产生的。
+    if (anchor < 0) return miss;
+    var n = list[anchor].nextElementSibling;
+    while (n && !n.querySelector('.ds-assistant-message-main-content')) n = n.nextElementSibling;
+    // 用户消息已挂载、助手节点还没渲染：同样继续等，不要拿别的节点顶替。
+    if (!n) return miss;
+    box = n;
+  } else {
+    // 纯图片提问没有可锚定的文本，只能按位置认：发送后新增的助手消息，
+    // 且不能是发送时就已存在的最后一条答案（思考阶段会先闪出上一轮回答）。
+    for (var k = list.length - 1; k >= 0; k--) {
+      if (!list[k].querySelector('.ds-assistant-message-main-content')) continue;
+      if (!isNew(k)) continue;
+      if (prevAnswer && norm(list[k].innerText) === prevAnswer) continue;
+      box = list[k];
       break;
     }
   }
-  // 图片提问等文本为空的场景：退回最后一个未打标的助手消息。
-  if (!box) {
-    for (var k = list.length - 1; k >= 0; k--) {
-      if (!list[k].hasAttribute('data-qq-prev') && list[k].querySelector('.ds-assistant-message-main-content')) {
-        box = list[k];
-        break;
-      }
-    }
-  }
-  if (!box) return JSON.stringify({ found: false, text: '', generating: generatingNow() });
-
-  var generating = generatingNow();
+  if (!box) return miss;
 
   var content = box.querySelector('.ds-assistant-message-main-content').cloneNode(true);
   content.querySelectorAll('[data-citation-group], .ds-markdown-cite').forEach(function (el) { el.remove(); });
@@ -718,7 +759,7 @@ impl CdpClient {
         ))
     }
 
-    /// 写入文字并发送。发送前给现有消息打标，后续只认未打标的新消息。
+    /// 写入文字并发送。发送前快照现有消息（位置 + 文本），后续只认快照之外的新消息。
     pub async fn send_message(
         self: &Arc<Self>,
         text: &str,
@@ -747,7 +788,7 @@ impl CdpClient {
             return Err(AppError::msg("无法写入 DeepSeek 输入框。"));
         }
 
-        // 给现有消息打标，并记录刚发出的文本作为新回复的身份锚点。
+        // 快照现有消息，并记录刚发出的文本作为本轮回复的身份锚点。
         let _ = self.evaluate(&mark_reply_js(&msg_json)).await?;
 
         // 复用写入阶段记住的输入框，确保 Enter 派发给刚写入 text 的同一个元素；
@@ -797,7 +838,7 @@ impl CdpClient {
         }
     }
 
-    /// Rust 侧轮询回复并推送事件。新回复靠"未打标"识别；完成判定见 `is_complete`：
+    /// Rust 侧轮询回复并推送事件。新回复靠"发送前快照之外的锚点"识别；完成判定见 `is_complete`：
     /// 生成停止 + 文本静默为主，另有独立于按钮状态的静默兜底。
     pub fn spawn_reply_poller(self: Arc<Self>, quiet_ms: u64) {
         tokio::spawn(async move {
