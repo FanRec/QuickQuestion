@@ -101,18 +101,21 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     inputRef.current?.focus();
     refreshActive();
     loadSettings();
-    // 只在独立窗口版里响应唤起（inline 版由球的形态控制显隐）。
-    if (variant !== "window") return;
     const ac = new AbortController();
-    onHotkeyInput(() => {
-      setWakeTick((n) => n + 1);
-      // 每次唤起都重读，防止用户改完设置后窗口没重新挂载。
-      loadSettings();
-      // 活跃会话可能已被主窗口切走（qq://active 只在发送后发，手动切不广播），
-      // 唤起时重拉一次，避免接续显示停留在过期会话。
-      refreshActive();
-    }, ac.signal);
+    // 设置变化两套实例都要跟随：球里的输入条开着时，用户在设置页改了自动消失秒数，
+    // 不该等到收起重开才生效。
     onSettingsChanged(loadSettings, ac.signal);
+    // 只有独立窗口版响应唤起（inline 版由球的形态控制显隐）。
+    if (variant === "window") {
+      onHotkeyInput(() => {
+        setWakeTick((n) => n + 1);
+        // 每次唤起都重读，防止用户改完设置后窗口没重新挂载。
+        loadSettings();
+        // 活跃会话可能已被别处改掉（网页里直接换了会话、或主窗口右键切换），
+        // 唤起时重拉一次，避免接续显示停留在过期会话。
+        refreshActive();
+      }, ac.signal);
+    }
     return () => ac.abort();
   }, [variant]);
 
@@ -242,6 +245,13 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
       setNewSession(false);
     } catch (e) {
       streamingRef.current = false;
+      // 失败要把文字和图片还回输入条：它们只在这一处持有，清掉就等于让用户重打重贴。
+      // 撑高要等回填渲染提交后再按 scrollHeight 重算（发送时已重置为 24px）。
+      setText(value);
+      setImages(sentImages);
+      window.requestAnimationFrame(() => {
+        if (inputRef.current) autoGrow(inputRef.current);
+      });
       setError(errText(e));
       setErrorKind(errKind(e));
       setStreaming(false);

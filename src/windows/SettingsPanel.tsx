@@ -28,6 +28,7 @@ export function SettingsPanel() {
   });
   const [theme, setTheme] = useState<ThemeMode>(loadTheme());
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [loginInfo, setLoginInfo] = useState<string>("未检测");
   const [active, setActive] = useState<SectionId>("login");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -63,11 +64,14 @@ export function SettingsPanel() {
     try {
       await updateSettings(settings);
       setSaved(true);
+      setSaveError(null);
       // 立刻让已打开的输入条换用新配置，避免"设了没反应"。
       await emitSettingsChanged();
       window.setTimeout(() => setSaved(false), 1500);
-    } catch {
+    } catch (e) {
+      // 原先这里只是把按钮恢复原状，用户看不出有任何异常——等于静默失败。
       setSaved(false);
+      setSaveError(`保存失败：${errText(e)}`);
     }
   };
 
@@ -246,6 +250,7 @@ export function SettingsPanel() {
         </div>
 
         <div className="settings-footer">
+          {saveError && <span className="settings-save-error">{saveError}</span>}
           <button type="button" className="settings-save" onClick={() => void save()}>
             {saved ? "已保存" : "保存"}
           </button>

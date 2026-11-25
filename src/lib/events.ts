@@ -41,7 +41,7 @@ export function onStream(handler: (payload: StreamPayload) => void, signal?: Abo
   return guarded<StreamPayload>("qq://stream", handler, signal);
 }
 
-/// 数据流刷新通知（问答落库后由 chat 窗口发出）。
+/// 数据流刷新通知（问答落库、或某条记录被删除后广播，各方重载列表）。
 export function onRefresh(handler: () => void, signal?: AbortSignal) {
   return guarded("qq://refresh", () => handler(), signal);
 }

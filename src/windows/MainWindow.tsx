@@ -170,7 +170,13 @@ export function MainWindow() {
         setExpanded(new Set([chosen.id]));
       }
       const mine = all.filter((e) => e.sessionId === chosen?.id);
-      if (mine.length) setSelectedId(mine[mine.length - 1].id);
+      // 启动时选"该会话最新一条"：listExchanges 是倒序、bySession 是正序，
+      // 两种顺序都只在本模块内部约定，取下标容易取反。这里直接按 createdAt 求最大。
+      const latest = mine.reduce<Exchange | null>(
+        (best, e) => (!best || e.createdAt > best.createdAt ? e : best),
+        null,
+      );
+      if (latest) setSelectedId(latest.id);
       const active = await activeSession().catch(() => null);
       if (active) setActiveId(active.id);
     })();
@@ -382,10 +388,9 @@ export function MainWindow() {
     e.preventDefault();
     void savePastedImages(e.clipboardData).then(({ paths, errors }) => {
       setImages((prev) => [...prev, ...paths]);
-      if (errors.length > 0) {
-        setNotice({ text: errors.join("\n"), kind: "error" });
-        window.setTimeout(() => setNotice(null), 4000);
-      }
+      // 走 flashNotice 而不是自己排 timer：单一 notice 只该有一个计时器，
+      // 否则这里到点会把之后出现的提示一起抹掉。
+      if (errors.length > 0) flashNotice(errors.join("\n"), "error");
     });
   };
 
@@ -421,7 +426,15 @@ export function MainWindow() {
     } catch (e) {
       streamingRef.current = false;
       setStreaming(false);
+      // 发送失败要把用户输入还回去：问题和图片都只在这一处持有，
+      // 清空后让用户重打一遍没有道理（图片已经回填，文字同理）。
+      setDraft(value);
       setImages(sentImages);
+      // 回填是异步渲染，撑高必须等这一帧提交后按真实 scrollHeight 重算，
+      // 否则长问题会缩成一行（发送时已把 height 重置为 auto）。
+      window.requestAnimationFrame(() => {
+        if (composerRef.current) autoGrow(composerRef.current);
+      });
       setNotice({ text: errText(e), kind: "error", code: errKind(e) });
     }
   };

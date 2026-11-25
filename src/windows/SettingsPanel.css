@@ -259,9 +259,21 @@
 .settings-footer {
   flex: none;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 12px;
   padding: 12px 40px 18px;
   border-top: 1px solid var(--separator);
+}
+
+/* 保存失败必须就地可见：静默失败等于"以为存了、其实没存"。 */
+.settings-save-error {
+  flex: 1;
+  min-width: 0;
+  color: var(--danger);
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: right;
 }
 
 .settings-save {
