@@ -76,8 +76,11 @@ struct Exchange {
          a. apply_modes 同步「深度思考/智能搜索」开关（导航后 DOM 重建，必须后置）
          b. subscribe 安装 mpsc 订阅者再发送，防事件丢失
          c. 上传图片（DOM.setFileInputFiles）、写入输入框
-         d. 给现有 .ds-message 打标、记下发出文本作为身份锚点，再派发 Enter
+         d. 快照现有 .ds-message（位置标记 + 文本 + 最后一条答案），记下发出文本作为身份锚点，再派发 Enter
       5. spawn_reply_poller 每 80ms 读一次新回复：
+         - 认锚点：发送后才能出现的用户消息里，文本含发出内容的那条；取其后第一个助手节点
+         - 锚点未出现（或助手节点还没渲染）就继续等，不拿"最后一条未打标"顶替——
+           那会先把上一条答案推给前端（闪旧答案）
          - 增量 → emit("qq://stream", {type:"delta", exchangeId, text})
          - 完成 = 生成停止且文本静默 quiet_ms；按钮状态卡住时由独立静默兜底
          - 完成 → 落库 → emit done；失败 → emit error（kind=loginRequired 等）
