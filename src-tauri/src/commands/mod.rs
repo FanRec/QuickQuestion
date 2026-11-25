@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
+use crate::card_presets::PresetInfo;
 use crate::cdp::StreamEvent;
 use crate::error::AppError;
 use crate::model::{BrowserStatus, Exchange, Session};
@@ -503,8 +504,32 @@ pub fn update_settings(
     current.hotkey = settings.hotkey;
     current.bubble_hide_secs = settings.bubble_hide_secs;
     current.popup_hide_secs = settings.popup_hide_secs;
+    current.card_preset = settings.card_preset;
     // current.last_session_id 保持不变：它是后端专属的恢复点。
     state.config.save(&current)
+}
+
+/// 列出用户目录中的贴图样式预设；内置两款由前端补齐。
+#[tauri::command]
+pub fn list_card_presets(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<PresetInfo>, AppError> {
+    state.card_presets.list()
+}
+
+/// 读取一个用户预设：资源已在后端转成 data URI，前端可直接拼接进渲染。
+#[tauri::command]
+pub fn load_card_preset(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<String, AppError> {
+    state.card_presets.load_css(&id)
+}
+
+/// 打开用户预设目录（不存在则创建）。
+#[tauri::command]
+pub fn open_card_presets_dir(state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
+    state.card_presets.open_dir()
 }
 
 /// 是否必须整页导航到目标会话。已在目标会话时跳过：连续追问每次都导航会

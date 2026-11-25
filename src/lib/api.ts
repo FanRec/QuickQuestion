@@ -110,6 +110,8 @@ export interface Settings {
   bubbleHideSecs: number;
   /** 独立输入条整体自动收起秒数；0 = 永不。 */
   popupHideSecs: number;
+  /** 贴图样式预设 id；内置 classic/plain 或用户目录名。 */
+  cardPreset: string;
 }
 
 export function getSettings(): Promise<Settings> {
@@ -118,4 +120,22 @@ export function getSettings(): Promise<Settings> {
 
 export function updateSettings(settings: Settings): Promise<void> {
   return invoke("update_settings", { settings });
+}
+
+export interface CardPresetInfo {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export function listCardPresets(): Promise<CardPresetInfo[]> {
+  return invoke("list_card_presets");
+}
+
+export function loadCardPreset(id: string): Promise<string> {
+  return invoke("load_card_preset", { id });
+}
+
+export function openCardPresetsDir(): Promise<void> {
+  return invoke("open_card_presets_dir");
 }

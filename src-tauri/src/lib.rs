@@ -1,5 +1,6 @@
 pub mod browser;
 pub mod cdp;
+pub mod card_presets;
 mod commands;
 mod config;
 mod error;
@@ -14,6 +15,7 @@ use tauri::Manager;
 use tokio::sync::Mutex;
 
 use browser::BrowserManager;
+use card_presets::CardPresets;
 use cdp::CdpClient;
 use config::ConfigService;
 use error::AppError;
@@ -25,6 +27,7 @@ pub struct AppState {
     pub cdp: Mutex<Option<Arc<CdpClient>>>,
     pub store: SqliteStore,
     pub config: ConfigService,
+    pub card_presets: CardPresets,
     /// 全局发送互斥：一个问答周期（发送到 done/error）内拒绝第二次提交。
     pub sending: AtomicBool,
 }
@@ -83,6 +86,7 @@ impl AppState {
             cdp: Mutex::new(None),
             store: SqliteStore::init()?,
             config,
+            card_presets: CardPresets::new(),
             sending: AtomicBool::new(false),
         })
     }
@@ -157,6 +161,9 @@ pub fn run() {
             commands::open_login_window,
             commands::get_settings,
             commands::update_settings,
+            commands::list_card_presets,
+            commands::load_card_preset,
+            commands::open_card_presets_dir,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

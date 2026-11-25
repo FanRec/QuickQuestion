@@ -3,18 +3,25 @@ import { useEffect, useRef, useState } from "react";
 import { browserStatus, errText, getSettings, updateSettings, type Settings } from "../lib/api";
 import { applyTheme, loadTheme, type ThemeMode } from "../lib/theme";
 import { emitSettingsChanged } from "../lib/events";
+import { listPresets, loadPresetCss, openPresetsDir, type PresetInfo } from "../lib/card-presets";
 import "./SettingsPanel.css";
 
-type SectionId = "login" | "prompt" | "appearance" | "hotkey" | "autohide" | "advanced";
+type SectionId = "login" | "prompt" | "appearance" | "card" | "hotkey" | "autohide" | "advanced";
 
 const NAV: { id: SectionId; label: string }[] = [
   { id: "login", label: "登录状态" },
   { id: "prompt", label: "系统提示" },
   { id: "appearance", label: "外观" },
+  { id: "card", label: "贴图样式" },
   { id: "hotkey", label: "唤起快捷键" },
   { id: "autohide", label: "自动消失" },
   { id: "advanced", label: "高级设置" },
 ];
+
+// 预览用固定短样例：保证渲染快，也保证不会撞上 8000px 高度上限。
+const PREVIEW_QUESTION = "示例问题";
+const PREVIEW_ANSWER = "这是一段用于预览的示例回答。\n\n## 小节\n\n- 要点一\n- 要点二";
+const PRESET_DIR_HINT = "%LOCALAPPDATA%\\QuickQuestion\\card-presets\\";
 
 export function SettingsPanel() {
   const [settings, setSettings] = useState<Settings>({
@@ -25,24 +32,79 @@ export function SettingsPanel() {
     lastSessionId: "",
     bubbleHideSecs: 5,
     popupHideSecs: 0,
+    cardPreset: "classic",
   });
   const [theme, setTheme] = useState<ThemeMode>(loadTheme());
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [loginInfo, setLoginInfo] = useState<string>("未检测");
   const [active, setActive] = useState<SectionId>("login");
+  const [presets, setPresets] = useState<PresetInfo[]>([]);
+  const [previewTheme, setPreviewTheme] = useState<"light" | "dark">(() =>
+    document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+  );
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [presetErrors, setPresetErrors] = useState<Record<string, string>>({});
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [presetDirError, setPresetDirError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     getSettings()
       .then(setSettings)
       .catch(() => undefined);
+    void refreshPresets();
   }, []);
 
   const change = <K extends keyof Settings>(key: K, value: Settings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
     setSaved(false);
   };
+
+  const refreshPresets = async () => {
+    try {
+      setPresets(await listPresets());
+      setPresetErrors({});
+    } catch (e) {
+      setPresetErrors({ __list__: errText(e) });
+    }
+  };
+
+  // 每张卡片都用真正的导出渲染器出图：所见即所得，同时验证预设能否加载。
+  // 串行渲染避免多个离屏节点互相干扰；cleanup 回收 blob URL，防止跨窗口泄漏。
+  useEffect(() => {
+    if (presets.length === 0) return;
+    let cancelled = false;
+    const created: string[] = [];
+    setPreviewLoading(true);
+    void (async () => {
+      const urls: Record<string, string> = {};
+      const errors: Record<string, string> = {};
+      const { markdownToPng } = await import("../lib/render-image");
+      for (const preset of presets) {
+        if (cancelled) break;
+        try {
+          const css = await loadPresetCss(preset.id);
+          const image = await markdownToPng(PREVIEW_QUESTION, PREVIEW_ANSWER, previewTheme, css);
+          const url = URL.createObjectURL(new Blob([image.bytes], { type: "image/png" }));
+          created.push(url);
+          urls[preset.id] = url;
+        } catch (e) {
+          errors[preset.id] = errText(e);
+        }
+      }
+      if (!cancelled) {
+        setPreviews(urls);
+        setPresetErrors(errors);
+      }
+    })().finally(() => {
+      if (!cancelled) setPreviewLoading(false);
+    });
+    return () => {
+      cancelled = true;
+      for (const url of created) URL.revokeObjectURL(url);
+    };
+  }, [presets, previewTheme]);
 
   const checkLogin = async () => {
     try {
@@ -105,6 +167,9 @@ export function SettingsPanel() {
     }
     setActive(current);
   };
+
+  const selectedMissing =
+    presets.length > 0 && !presets.some((preset) => preset.id === settings.cardPreset);
 
   return (
     <div className="settings-panel">
@@ -174,6 +239,88 @@ export function SettingsPanel() {
                 </button>
               ))}
             </div>
+          </section>
+
+          <section className="settings-group" id="set-card">
+            <div className="preset-section-head">
+              <h3 className="settings-label">贴图样式</h3>
+              <div className="preset-toolbar">
+                {(["light", "dark"] as const).map((mode) => (
+                  <button
+                    type="button"
+                    key={mode}
+                    className={`theme-option theme-option--small${previewTheme === mode ? " is-active" : ""}`}
+                    onClick={() => setPreviewTheme(mode)}
+                  >
+                    {mode === "light" ? "浅色" : "深色"}
+                  </button>
+                ))}
+                <button type="button" className="settings-button settings-button--small" onClick={() => void refreshPresets()}>
+                  刷新
+                </button>
+              </div>
+            </div>
+            <p className="settings-desc">点击预览卡片选择样式，保存后生效。预览跟随上方主题。</p>
+            {presetErrors.__list__ && (
+              <span className="settings-hint is-error">预设列表读取失败：{presetErrors.__list__}</span>
+            )}
+            <div className="preset-gallery" role="radiogroup" aria-label="贴图样式">
+              {presets.map((preset) => {
+                const error = presetErrors[preset.id];
+                const selected = settings.cardPreset === preset.id;
+                return (
+                  <button
+                    type="button"
+                    key={preset.id}
+                    role="radio"
+                    aria-checked={selected}
+                    disabled={!!error}
+                    className={`preset-tile${selected ? " is-active" : ""}`}
+                    title={error || preset.description || undefined}
+                    onClick={() => change("cardPreset", preset.id)}
+                  >
+                    <span className="preset-tile-preview">
+                      {previews[preset.id] ? (
+                        <img src={previews[preset.id]} alt={`${preset.label} 预览`} />
+                      ) : (
+                        <span className={`preset-tile-msg${error ? " is-error" : ""}`}>
+                          {error ? "加载失败" : previewLoading ? "渲染中…" : "无预览"}
+                        </span>
+                      )}
+                    </span>
+                    <span className="preset-tile-label">
+                      <span>{preset.label}</span>
+                      {selected && (
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M3 8l3.5 3.5L13 5" />
+                        </svg>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                className="preset-tile preset-tile--folder"
+                aria-label="打开用户预设目录"
+                onClick={() => {
+                  void openPresetsDir()
+                    .then(refreshPresets)
+                    .catch((e) => setPresetDirError(`打开目录失败：${errText(e)}`));
+                }}
+              >
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 7h6l2 2h10v9H3z" />
+                  <path d="M3 7V5h6l2 2" />
+                </svg>
+                <span>用户预设目录</span>
+              </button>
+            </div>
+            {selectedMissing && (
+              <span className="settings-hint is-error">当前选择的样式未找到，贴图会失败，请重新选择。</span>
+            )}
+            {presetDirError && <span className="settings-hint is-error">{presetDirError}</span>}
+            <span className="settings-hint">目录：{PRESET_DIR_HINT} · 增删预设后点「刷新」</span>
           </section>
 
           <section className="settings-group" id="set-hotkey">

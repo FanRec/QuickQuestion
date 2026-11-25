@@ -1,27 +1,8 @@
 import MarkdownIt from "markdown-it";
 import { katex } from "@mdit/plugin-katex";
 import hljs from "highlight.js/lib/common";
-import { buildCardCss, cardDecorColor, type CardTheme } from "./card-css";
-import { KATEX_CSS_INLINE, MASCOT_DATA_URI } from "./inline-assets";
-
-const TOP_DECOR = `<svg class="qq-decor-top" viewBox="0 0 290 150" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-<g fill="none" stroke="var(--qq-decor)" stroke-width="2" stroke-linecap="round">
-<path d="M6 144C70 130 122 106 178 42"/><path d="M38 146C116 138 190 110 284 44"/><path d="M118 132C176 124 226 104 272 70"/>
-</g>
-<g fill="var(--qq-decor)" opacity=".85">
-<g transform="translate(178,42)"><ellipse cx="0" cy="-10" rx="5.5" ry="10"/><ellipse cx="0" cy="-10" rx="5.5" ry="10" transform="rotate(72)"/><ellipse cx="0" cy="-10" rx="5.5" ry="10" transform="rotate(144)"/><ellipse cx="0" cy="-10" rx="5.5" ry="10" transform="rotate(216)"/><ellipse cx="0" cy="-10" rx="5.5" ry="10" transform="rotate(288)"/></g>
-<g transform="translate(244,72)" opacity=".8"><ellipse cx="0" cy="-8" rx="4.5" ry="8"/><ellipse cx="0" cy="-8" rx="4.5" ry="8" transform="rotate(72)"/><ellipse cx="0" cy="-8" rx="4.5" ry="8" transform="rotate(144)"/><ellipse cx="0" cy="-8" rx="4.5" ry="8" transform="rotate(216)"/><ellipse cx="0" cy="-8" rx="4.5" ry="8" transform="rotate(288)"/></g>
-<g transform="translate(284,44)" opacity=".7"><ellipse cx="0" cy="-7" rx="4" ry="7"/><ellipse cx="0" cy="-7" rx="4" ry="7" transform="rotate(72)"/><ellipse cx="0" cy="-7" rx="4" ry="7" transform="rotate(144)"/><ellipse cx="0" cy="-7" rx="4" ry="7" transform="rotate(216)"/><ellipse cx="0" cy="-7" rx="4" ry="7" transform="rotate(288)"/></g>
-</g></svg>`;
-
-// 波浪必须铺满卡片全宽（760px）。原先固定 430px，右侧留下断层。
-// 吉祥物在 DOM 中排在波浪之后、层级更高，会自然叠在连续波浪上。
-const BOTTOM_DECOR = `<svg class="qq-decor-bottom" viewBox="0 0 760 130" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" aria-hidden="true">
-<path d="M0 130V88C40 58 80 66 118 92C160 120 200 96 240 78C300 52 360 70 430 92C490 110 550 78 620 72C680 66 720 90 760 84V130Z" fill="var(--qq-decor)" opacity=".42"/>
-<path d="M0 130V104C60 84 100 104 150 118C210 134 280 108 340 106C400 104 450 122 520 116C590 110 650 100 700 112C730 118 748 112 760 116V130Z" fill="var(--qq-decor)" opacity=".28"/>
-<path d="M76 58l6 16 16 6-16 6-6 16-6-16-16-6 16-6z" fill="#fff" opacity=".9"/>
-<path d="M470 96l4 10 10 4-10 4-4 10-4-10-10-4 10-4z" fill="#fff" opacity=".75"/>
-</svg>`;
+import { BASE_CARD_CSS, type CardTheme } from "./card-css";
+import { KATEX_CSS_INLINE } from "./inline-assets";
 
 function escapeText(s: string): string {
   return s
@@ -88,34 +69,31 @@ export interface RenderedImage {
 }
 
 /**
- * 把问答渲染成贴片 PNG。字体与吉祥物已 data URI 内联，整张 SVG 自包含，
- * 因此 drawn canvas 不会被跨域资源污染，toBlob 可用。
+ * 把问答渲染成贴片 PNG。字体、吉祥物、装饰与预设资源都已内联，
+ * 整张 SVG 自包含，drawn canvas 不会被跨域资源污染，toBlob 可用。
+ * presetCss 是 resolvePresetCss 返回的完整样式片段（基线之后追加）。
  */
 export async function markdownToPng(
   question: string,
   answer: string,
   theme: CardTheme,
+  presetCss: string,
 ): Promise<RenderedImage> {
   const env: CardEnv = { sectionNo: 0 };
   const answerHtml = md.render(answer, env);
   const title = escapeText(question.trim() || "[图片]");
-  const decor = cardDecorColor(theme);
-  const fillDecor = (svg: string) => svg.replace(/var\(--qq-decor\)/g, decor);
-  const topDecor = fillDecor(TOP_DECOR);
-  const bottomDecor = fillDecor(BOTTOM_DECOR);
   const bodyHtml =
-    '<div class="qq-frame"><div class="qq-card">' +
+    `<div class="qq-frame" data-qq-theme="${theme}"><div class="qq-card">` +
     `<div class="qq-content"><h1 class="qq-title">${title}</h1>${answerHtml}</div>` +
-    topDecor + bottomDecor +
-    `<img class="qq-mascot" src="${MASCOT_DATA_URI}" alt="">` +
+    '<div class="qq-decor-top"></div><div class="qq-decor-bottom"></div><div class="qq-mascot"></div>' +
     "</div></div>";
 
-  const css = buildCardCss(theme) + "\n" + KATEX_CSS_INLINE;
+  const css = BASE_CARD_CSS + "\n" + presetCss + "\n" + KATEX_CSS_INLINE;
   // 样式必须放进 shadow root 隔离：<style> 挂在 document.body 下会全局生效，
   // 卡片的 * / body / .katex-display 规则会污染主窗口（点击瞬间闪一下）。
-  // shadow 内的样式只作用于影子树，XMLSerializer 序列化 holder 仍带上完整 CSS。
+  // 用户预设是外部文本，闭合标签要转义，否则会从 <style> 里逃出去。
   const holder = document.createElement("div");
-  holder.innerHTML = `<style>${css}</style>${bodyHtml}`;
+  holder.innerHTML = `<style>${css.replace(/<\/style/gi, "<\\/style")}</style>${bodyHtml}`;
   const offscreen = document.createElement("div");
   offscreen.style.cssText =
     "position:fixed;left:-20000px;top:0;width:800px;visibility:hidden;pointer-events:none";

@@ -27,6 +27,13 @@ pub struct Settings {
     /// 独立输入条整体自动收起秒数；0 表示永不收起。
     #[serde(default)]
     pub popup_hide_secs: u64,
+    /// 贴图样式预设 id；只存标识，不存 CSS 内容。
+    #[serde(default = "default_card_preset")]
+    pub card_preset: String,
+}
+
+fn default_card_preset() -> String {
+    "classic".to_string()
 }
 
 fn default_bubble_hide() -> u64 {
@@ -51,6 +58,7 @@ impl Default for Settings {
             hotkey: "Alt+Q".to_string(),
             bubble_hide_secs: 5,
             popup_hide_secs: 0,
+            card_preset: default_card_preset(),
         }
     }
 }
@@ -131,6 +139,10 @@ fn normalize(mut s: Settings) -> Settings {
     if s.hotkey.trim().is_empty() {
         s.hotkey = "Alt+Q".to_string();
     }
+    s.card_preset = s.card_preset.trim().to_string();
+    if s.card_preset.is_empty() {
+        s.card_preset = default_card_preset();
+    }
     s
 }
 
@@ -149,6 +161,7 @@ mod tests {
         // 缺失字段取 default，而非把整份设置重置。
         assert_eq!(s.browser_port, 9222);
         assert_eq!(s.quiet_ms, 900);
+        assert_eq!(s.card_preset, "classic");
     }
 
     #[test]
@@ -159,6 +172,7 @@ mod tests {
             bubble_hide_secs: 9999,
             popup_hide_secs: 9999,
             hotkey: "  ".into(),
+            card_preset: "  ".into(),
             ..Settings::default()
         };
         let n = normalize(s);
@@ -167,6 +181,7 @@ mod tests {
         assert_eq!(n.bubble_hide_secs, 600);
         assert_eq!(n.popup_hide_secs, 600);
         assert_eq!(n.hotkey, "Alt+Q");
+        assert_eq!(n.card_preset, "classic");
     }
 
     /// 保存走"临时文件 + 改名"：写完不能留下 .tmp，且内容可原样读回。

@@ -6,7 +6,8 @@
 <style>
 body{margin:0;padding:24px;background:#16151d;color:#f2f1f7;font:14px/1.6 "Segoe UI",sans-serif}
 button{background:#7c5ce8;color:#fff;border:0;border-radius:8px;padding:8px 16px;cursor:pointer;margin-right:8px}
-button:nth-child(2){background:#444}
+button:nth-child(n+3){background:#444}
+button.is-active{outline:2px solid #a78bfa}
 img{display:block;max-width:100%;margin-top:20px;border-radius:8px}
 #status{margin-top:12px;color:#a78bfa}
 </style>
@@ -14,6 +15,8 @@ img{display:block;max-width:100%;margin-top:20px;border-radius:8px}
 <body>
 <button id="light">渲染浅色</button>
 <button id="dark">渲染深色</button>
+<button id="classic">经典预设</button>
+<button id="plain">朴素预设</button>
 <button id="download">下载 PNG</button>
 <div id="status"></div>
 <img id="preview" alt="贴片预览">
@@ -42,34 +45,51 @@ $$
 
 <script type="module">
 import { markdownToPng } from "./src/lib/render-image.ts";
+import { getBuiltinPreset } from "./src/lib/card-css.ts";
 const q = document.getElementById("sample-question").textContent;
 const a = document.getElementById("sample-answer").textContent;
 const status = document.getElementById("status");
 const preview = document.getElementById("preview");
 let last = null;
-async function render(theme) {
+let theme = document.location.hash === "#dark" ? "dark" : "light";
+let presetId = "classic";
+async function render() {
   status.textContent = "渲染中…";
   try {
-    last = await markdownToPng(q, a, theme);
+    const preset = getBuiltinPreset(presetId);
+    if (!preset) throw new Error(`未知预设：${presetId}`);
+    last = await markdownToPng(q, a, theme, preset.css);
     if (preview.src.startsWith("blob:")) URL.revokeObjectURL(preview.src);
     preview.src = URL.createObjectURL(new Blob([last.bytes], { type: "image/png" }));
-    status.textContent = `完成：${last.width}×${last.height}，${Math.round(last.bytes.length / 1024)} KB`;
+    status.textContent = `${theme} / ${preset.label}：${last.width}×${last.height}，${Math.round(last.bytes.length / 1024)} KB`;
   } catch (e) {
     status.textContent = `失败：${e.message}`;
     console.error(e);
   }
 }
-document.getElementById("light").onclick = () => render("light");
-document.getElementById("dark").onclick = () => render("dark");
+function mark() {
+  document.getElementById("classic").classList.toggle("is-active", presetId === "classic");
+  document.getElementById("plain").classList.toggle("is-active", presetId === "plain");
+}
+document.getElementById("light").onclick = () => { theme = "light"; void render(); };
+document.getElementById("dark").onclick = () => { theme = "dark"; void render(); };
+document.getElementById("classic").onclick = () => { presetId = "classic"; mark(); void render(); };
+document.getElementById("plain").onclick = () => { presetId = "plain"; mark(); void render(); };
 document.getElementById("download").onclick = () => {
   if (!last) return;
   const a2 = document.createElement("a");
   a2.href = URL.createObjectURL(new Blob([last.bytes], { type: "image/png" }));
-  a2.download = `card-${last.width}x${last.height}.png`;
+  a2.download = `card-${presetId}-${theme}-${last.width}x${last.height}.png`;
   a2.click();
 };
-window.__renderCard = render;
-render(document.location.hash === "#dark" ? "dark" : "light");
+window.__renderCard = (nextTheme, nextPreset) => {
+  theme = nextTheme;
+  presetId = nextPreset;
+  mark();
+  return render();
+};
+mark();
+void render();
 </script>
 </body>
 </html>

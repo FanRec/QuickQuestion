@@ -19,7 +19,8 @@
 │  remember_session · switch_session · delete_session      │
 │  delete_exchange · copy_markdown · save_temp_image       │
 │  open_login_window · browser_status · get_settings       │
-│  update_settings                                         │
+│  update_settings · list_card_presets · load_card_preset   │
+│  open_card_presets_dir                                   │
 └──────────────────────┬───────────────────────────────────┘
 ┌──────────────────────▼───────────────────────────────────┐
 │  Rust 内核 (src-tauri/src/)                              │
@@ -27,6 +28,7 @@
 │  browser/    Edge 启动/复用、端口探测、生命周期            │
 │  store/      SQLite 仓储（Session / Exchange 单一数据源） │
 │  config.rs   settings.json 读写                          │
+│  card_presets.rs  用户贴图预设目录扫描与资源内联          │
 │  commands/   IPC 实现，唯一编排层                         │
 │  model.rs    Session / Exchange / BrowserStatus 领域类型 │
 └──────────────────────┬───────────────────────────────────┘
@@ -124,6 +126,12 @@ struct Exchange {
 唯一视觉事实源，组件只消费 CSS 变量，换肤不改组件：
 品牌紫主色 + 语义色（success/danger）、中性色阶、表面色阶、R8/R12/R16 圆角、
 S1–S3 阴影、160ms `cubic-bezier(.2,.8,.2,1)` 动效、明暗双主题（`:root[data-theme]`）。
+
+### 6.1 贴图样式预设
+
+贴图是导出函数 `PNG = Render(content, theme, presetCss)`。骨架（DOM、markdown、高亮、公式、尺寸）由 `card-css.ts` 固定，预设只通过 `--qq-*` 变量覆盖外观；主题是正交轴，渲染时在 `.qq-frame` 上写 `data-qq-theme`，一份预设可带两套颜色。
+
+预设来源两条，返回同一种 CSS 片段：内置的 `classic`/`plain` 在前端常量里；用户预设放在 `%LOCALAPPDATA%/QuickQuestion/card-presets/<id>/`，由 `card_presets.rs` 读取 `tokens.css` 并把约定资源文件转成 data URI 后返回。设置只存预设 id，不存 CSS——用户改文件后刷新即可生效，不产生第二份真相。预览卡片与真实贴图调用同一个 `markdownToPng`，所见即所得；预设加载失败显式报错，不静默回退。完整契约见 [CARD_PRESETS.md](CARD_PRESETS.md)。
 
 ## 7. 失败路径
 
