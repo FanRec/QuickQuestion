@@ -58,6 +58,14 @@ export function rememberSession(id: string): Promise<void> {
   return invoke<void>("remember_session", { id });
 }
 
+/**
+ * 真正切换会话：后端把网页导航到该会话并广播 `qq://active`。
+ * 与左栏单击（只改浏览焦点）不同，这条路会驱动网页，耗时可达数秒。
+ */
+export function switchSession(id: string): Promise<Session> {
+  return invoke<Session>("switch_session", { id });
+}
+
 /** 是否有问答正在进行中（全局，两套输入条共用）。 */
 export function isSending(): Promise<boolean> {
   return invoke<boolean>("is_sending");

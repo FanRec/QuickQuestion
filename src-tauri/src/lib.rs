@@ -149,6 +149,7 @@ pub fn run() {
             commands::active_session,
             commands::is_sending,
             commands::remember_session,
+            commands::switch_session,
             commands::delete_session,
             commands::delete_exchange,
             commands::copy_markdown,

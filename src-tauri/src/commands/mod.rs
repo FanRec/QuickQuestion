@@ -389,6 +389,42 @@ pub fn remember_session(state: State<'_, Arc<AppState>>, id: String) -> Result<(
     state.config.set_last_session(&id)
 }
 
+/// 真正切换会话：把网页导航到该会话，再广播活跃会话。
+///
+/// 与左栏单击的区别必须显式：单击是浏览焦点（currentId），不驱动网页——翻看
+/// 历史时每次整页重载既慢又没必要。菜单里的「切换到该会话」是显式命令，网页
+/// 必须跟过去，否则接续行、网页位置标记与悬浮球的发送目标都停在旧会话。
+#[tauri::command]
+pub async fn switch_session(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<Session, AppError> {
+    // 回复进行中不能切：导航会重建 DOM，正在轮询的回复直接丢失。
+    if state.sending.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(AppError::msg("正在回复中，请等待完成或先打断。".to_string()));
+    }
+    let session = state
+        .store
+        .find_session(&id)?
+        .ok_or_else(|| AppError::msg("未找到该会话。".to_string()))?;
+    if session.deepseek_chat_id.is_empty() {
+        return Err(AppError::msg("该会话尚未绑定网页会话，无法接续。".to_string()));
+    }
+    let cdp = state.ensure_cdp().await?;
+    // 已在目标会话就不重复导航：导航本身要等输入框就绪，能省则省。
+    let current_chat_id = cdp.current_chat_id().await.unwrap_or_default();
+    if needs_navigate(&current_chat_id, &session.deepseek_chat_id) {
+        cdp.navigate_to_chat(&session.deepseek_chat_id).await?;
+    }
+    // 广播而非让各窗口自己回拉：此刻 URL 已切稳，事件里的会话是权威值。
+    let _ = app.emit(
+        "qq://active",
+        serde_json::json!({ "sessionId": session.id, "title": session.title }),
+    );
+    Ok(session)
+}
+
 /// 删除会话及其全部问答。
 #[tauri::command]
 pub fn delete_session(state: State<'_, Arc<AppState>>, id: String) -> Result<(), AppError> {

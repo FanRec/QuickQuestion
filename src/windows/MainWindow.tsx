@@ -20,6 +20,7 @@ import {
   listSessions,
   rememberSession,
   sendMessage,
+  switchSession,
 } from "../lib/api";
 import { onActive, onRefresh, onSelect, onStream } from "../lib/events";
 import { hasImageFiles, savePastedImages } from "../lib/paste";
@@ -131,6 +132,15 @@ export function MainWindow() {
     () => allExchanges.find((e) => e.id === selectedId) ?? null,
     [allExchanges, selectedId],
   );
+
+  // 接续行描述的是"这条输入条下一次发送会接到哪里"，因此由 currentId 与绑定状态决定，
+  // 不能用 activeId（网页当前位置）：单击左栏只改焦点不导航，两者会短暂分离。
+  // 与后端 send_inner 的决策一致——未绑定网页会话的会话发送时会另起新会话。
+  const resumeSession = useMemo(() => {
+    if (newSession || !currentId) return null;
+    const s = sessions.find((x) => x.id === currentId);
+    return s && s.deepseekChatId ? s : null;
+  }, [newSession, currentId, sessions]);
 
   // 点标题栏 X 时只隐藏、不销毁窗口。
   useEffect(() => {
@@ -249,6 +259,21 @@ export function MainWindow() {
     setCurrentId(sessionId);
     setSelectedId(mine.length ? mine[mine.length - 1].id : null);
     setNotice(null);
+  };
+
+  // 菜单里的「切换到该会话」：让网页真的切过去，成功后才移动本地焦点。
+  // 失败（未绑定网页会话/回复中/导航超时）保持原状，避免"高亮在 B、网页还在 A"。
+  const switchToSession = async (sessionId: string) => {
+    setMenu(null);
+    setNotice({ text: "正在切换会话…", kind: "ok" });
+    try {
+      const s = await switchSession(sessionId);
+      focusSession(s.id);
+      setActiveId(s.id);
+      flashNotice(`已切换到：${s.title || "未命名会话"}`, "ok");
+    } catch (e) {
+      flashNotice(`切换失败：${errText(e)}`, "error");
+    }
   };
 
   const toggleExpanded = (id: string) => {
@@ -657,13 +682,16 @@ export function MainWindow() {
                 )}
               </div>
 
-              {(activeId || newSession) && (
-                <div className={`detail-context${newSession ? " is-new" : ""}`}>
-                  {newSession
-                    ? "本次将开启新会话"
-                    : `接续：${sessions.find((s) => s.id === activeId)?.title ?? "网页当前会话"}`}
-                </div>
-              )}
+              {/* 流式期间不显示接续行：本轮新会话的 chat_id 要到 done 才绑定，
+                  此刻按绑定状态判定必然显示"未接续"，而实际上发送权已被本轮占住。 */}
+              {!streaming &&
+                (newSession ? (
+                  <div className="detail-context is-new">本次将开启新会话</div>
+                ) : resumeSession ? (
+                  <div className="detail-context">接续：{resumeSession.title || "未命名会话"}</div>
+                ) : (
+                  <div className="detail-context">未接续 · 发送将开启新会话</div>
+                ))}
               <div className="detail-compose">
                 {images.length > 0 && (
                   <div className="composer-image-row">
@@ -770,10 +798,7 @@ export function MainWindow() {
               <button
                 type="button"
                 className="ctx-item"
-                onClick={() => {
-                  focusSession(menu.sessionId);
-                  setMenu(null);
-                }}
+                onClick={() => void switchToSession(menu.sessionId)}
               >
                 切换到该会话
               </button>
