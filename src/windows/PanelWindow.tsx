@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { writeHtml } from "@tauri-apps/plugin-clipboard-manager";
-import { markdownToHtml } from "../lib/clipboard";
-import { copyAsImage } from "../lib/copy-image";
+import { copyAsImage, copyAsRichText } from "../lib/copy";
 import { IconButton } from "../components/IconButton";
 import { Composer } from "../components/Composer";
-import { copyMarkdown, deleteExchange, errText, isSending, listExchanges } from "../lib/api";
-import { emitSelect, onHotkeyInput, onRefresh } from "../lib/events";
+import { deleteExchange, errText, isSending, listExchanges } from "../lib/api";
+import { emitRefresh, emitSelect, onHotkeyInput, onRefresh } from "../lib/events";
 import type { Exchange } from "../lib/types";
 import { questionLabel } from "../lib/types";
 import mascot from "../assets/mascot.png";
@@ -186,8 +184,7 @@ export function PanelWindow() {
 
   const copyItem = async (id: string) => {
     try {
-      const markdown = await copyMarkdown(id);
-      await writeHtml(markdownToHtml(markdown), markdown);
+      await copyAsRichText(id);
       setCopiedId(id);
       setCopyError(null);
       window.setTimeout(() => setCopiedId(null), 1500);
@@ -214,6 +211,8 @@ export function PanelWindow() {
       await deleteExchange(id);
       setItems((prev) => prev.filter((item) => item.id !== id));
       setCopyError(null);
+      // 主窗口若开着，靠这条广播重载；否则会留着一行已删除的问答，点开仍是旧内容。
+      void emitRefresh();
     } catch (e) {
       setCopyError(`删除失败：${errText(e)}`);
       window.setTimeout(() => setCopyError(null), 4000);

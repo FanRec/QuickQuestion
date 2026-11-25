@@ -119,7 +119,7 @@ fn normalize(mut s: Settings) -> Settings {
     if !(200..=5000).contains(&s.quiet_ms) {
         s.quiet_ms = 900;
     }
-    // 与设置页输入框的 min/max 保持一致；负数（JSON 层面不可能，防御手输 0 以下）归 0。
+    // 上限与设置页输入框的 max 对齐；非负已由 u64 的类型保证，无需再钳一次。
     s.bubble_hide_secs = s.bubble_hide_secs.min(600);
     s.popup_hide_secs = s.popup_hide_secs.min(600);
     if s.hotkey.trim().is_empty() {

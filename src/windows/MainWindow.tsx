@@ -4,14 +4,12 @@ import { katex } from "@mdit/plugin-katex";
 import "katex/dist/katex.min.css";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { writeHtml, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { markdownToHtml } from "../lib/clipboard";
-import { copyAsImage } from "../lib/copy-image";
+import { copyAsImage, copyAsRichText } from "../lib/copy";
 import {
   activeSession,
   cancelMessage,
-  copyMarkdown,
   deleteExchange,
   deleteSession,
   errKind,
@@ -320,8 +318,7 @@ export function MainWindow() {
   const copyExchange = async (id: string) => {
     setMenu(null);
     try {
-      const markdown = await copyMarkdown(id);
-      await writeHtml(markdownToHtml(markdown), markdown);
+      await copyAsRichText(id);
       flashNotice("已复制", "ok");
     } catch (e) {
       flashNotice(`复制失败：${errText(e)}`, "error");
@@ -627,7 +624,7 @@ export function MainWindow() {
               )}
               <div className="detail-scroll" ref={scrollRef}>
                 {streaming && (
-                  <div className="turn">
+                  <div>
                     <div className="turn-question">{streamQuestion}</div>
                     <div className="turn-answer detail-streaming">
                       {streamAnswer ? (
@@ -643,7 +640,7 @@ export function MainWindow() {
                 )}
 
                 {!streaming && selected && (
-                  <div className="turn">
+                  <div>
                     <div className="turn-context">
                       {sessions.find((s) => s.id === selected.sessionId)?.title ?? "会话"}
                       {selected.sessionId === activeId && <span className="turn-context-active"> · 网页当前在此</span>}

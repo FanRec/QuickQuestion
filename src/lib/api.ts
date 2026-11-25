@@ -41,8 +41,9 @@ export function errKind(error: unknown): string | undefined {
   return undefined;
 }
 
-export function listExchanges(sessionId?: string): Promise<Exchange[]> {
-  return invoke<Exchange[]>("list_exchanges", { sessionId: sessionId ?? null });
+/** 全部问答（倒序）。按会话分组由前端从全集派生，IPC 不再带过滤参数。 */
+export function listExchanges(): Promise<Exchange[]> {
+  return invoke<Exchange[]>("list_exchanges");
 }
 
 export function listSessions(): Promise<Session[]> {

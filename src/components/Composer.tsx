@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { writeHtml } from "@tauri-apps/plugin-clipboard-manager";
-import { markdownToHtml } from "../lib/clipboard";
-import { copyAsImage } from "../lib/copy-image";
+import { copyAsImage, copyAsRichText } from "../lib/copy";
 import {
   activeSession,
   cancelMessage,
-  copyMarkdown,
   errKind,
   errText,
   getSettings,
@@ -271,8 +268,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
   const copyAnswer = async () => {
     if (!exchangeId) return;
     try {
-      const markdown = await copyMarkdown(exchangeId);
-      await writeHtml(markdownToHtml(markdown), markdown);
+      await copyAsRichText(exchangeId);
       setCopyFailed(false);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);

@@ -251,6 +251,9 @@ async fn send_inner(
                             // 仅当恢复点仍指向本轮会话（期间没被用户切换）才回滚。
                             let _ = config_for_task.restore_last_session_if(sid, &old_last_session);
                         }
+                        // 这条路径没有走 finish（错误直接 emit 给前端），订阅者仍是本轮
+                        // 安装的那个，必须自己摘掉——否则下一轮 subscribe 前的残留窗口里
+                        // 页面事件会继续流向已结束的轮次。
                         cdp_for_task.unsubscribe().await;
                         break;
                     }
@@ -279,7 +282,8 @@ async fn send_inner(
                             "text": answer,
                         }),
                     );
-                    cdp_for_task.unsubscribe().await;
+                    // 不再 unsubscribe：finish 已把订阅者 take 走。此时再清一次要么空转，
+                    // 要么清掉下一轮刚安装的订阅者（用户收到 done 后立刻追问的窗口）。
                     break;
                 }
                 StreamEvent::Error { message, kind } => {
@@ -306,7 +310,7 @@ async fn send_inner(
                         payload["kind"] = serde_json::json!(kind);
                     }
                     let _ = app_for_task.emit("qq://stream", payload);
-                    cdp_for_task.unsubscribe().await;
+                    // 同 Done 分支：finish 已摘除订阅者，这里不再重复清。
                     break;
                 }
             }
@@ -330,17 +334,11 @@ pub async fn cancel_message(state: State<'_, Arc<AppState>>) -> Result<(), AppEr
     Ok(())
 }
 
-/// 列出全部问答（倒序），悬浮列表与主窗口左栏共用。
+/// 列出全部问答（倒序）。悬浮列表、主窗口左栏与贴图入口共用这一份数据；
+/// 按会话筛选由前端从全集派生（bySession），IPC 不再保留无人使用的过滤参数。
 #[tauri::command]
-pub fn list_exchanges(
-    state: State<'_, Arc<AppState>>,
-    session_id: Option<String>,
-) -> Result<Vec<Exchange>, AppError> {
-    match session_id {
-        // 指定会话就只看该会话的问答；不传则返回全部（悬浮面板的历史用）。
-        Some(id) if !id.is_empty() => state.store.list_by_session(&id),
-        _ => state.store.list(),
-    }
+pub fn list_exchanges(state: State<'_, Arc<AppState>>) -> Result<Vec<Exchange>, AppError> {
+    state.store.list()
 }
 
 /// 列出全部会话，按最近活动排序。
