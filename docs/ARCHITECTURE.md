@@ -16,18 +16,19 @@
 │  Tauri IPC 命令层 (commands/)                            │
 │  send_message · cancel_message · is_sending              │
 │  list_exchanges · list_sessions · active_session         │
-│  remember_session · delete_session · delete_exchange     │
-│  copy_markdown · save_temp_image · open_login_window     │
-│  browser_status · get_settings · update_settings · ping  │
+│  remember_session · switch_session · delete_session      │
+│  delete_exchange · copy_markdown · save_temp_image       │
+│  open_login_window · browser_status · get_settings       │
+│  update_settings                                         │
 └──────────────────────┬───────────────────────────────────┘
 ┌──────────────────────▼───────────────────────────────────┐
 │  Rust 内核 (src-tauri/src/)                              │
 │  cdp/        CDP WebSocket 客户端、注入脚本、流式轮询      │
 │  browser/    Edge 启动/复用、端口探测、生命周期            │
 │  store/      SQLite 仓储（Session / Exchange 单一数据源） │
-│  config/     settings.json 读写                          │
+│  config.rs   settings.json 读写                          │
 │  commands/   IPC 实现，唯一编排层                         │
-│  model/      Session / Exchange / BrowserStatus 领域类型 │
+│  model.rs    Session / Exchange / BrowserStatus 领域类型 │
 └──────────────────────┬───────────────────────────────────┘
                        │ CDP WebSocket / 文件 IO
 ┌──────────────────────▼───────────────────────────────────┐
@@ -85,6 +86,21 @@ struct Exchange {
 
 前端拿到的 delta 是**全量替换**而非拼接：丢一次增量下一条自动补齐，简单可靠。
 
+### 3.1 会话指针与「接续」语义
+
+三个指针职责固定，不再互相顶替（历史上"人在 B、内容是 A"就出在职责混淆）：
+
+| 指针 | 含义 | 谁写 |
+|---|---|---|
+| `currentId` | 主窗口这条输入条的发送目标（用户意图焦点） | 左栏单击、搜索定位、发送成功、切换成功 |
+| `selectedId` | 右栏展示哪一条问答 | 由 `currentId` 派生该会话最后一条 |
+| `activeId` | 网页当前所在会话，只读投影 | `active_session` 命令、`qq://active` 事件 |
+
+- **接续行 = 本输入条的发送目标**：主窗口按 `currentId` + 是否已绑定 `deepseek_chat_id` 派生（与后端 `send_inner` 的判断同源，未绑定时显示「未接续 · 发送将开启新会话」）；悬浮球/独立输入条没有会话列表，按 `activeId` 派生，因为那就是它的发送目标。
+- **左栏单击只移动浏览焦点，不导航网页**：翻看历史不该每次整页重载。
+- **右键「切换到该会话」是显式命令**：`switch_session` 真正导航网页并广播 `qq://active`，让网页位置、接续行与悬浮球发送目标一起收敛。回复进行中拒绝切换（导航会重建 DOM，正在轮询的回复会丢）。
+- 未绑定网页会话的会话（历史迁移遗留）无法接续，后端发送时另建会话。
+
 ## 4. 模块边界与依赖方向
 
 - `commands/` 依赖 `cdp/`、`browser/`、`store/`、`config/`、`model/`
@@ -95,8 +111,9 @@ struct Exchange {
 ## 5. 窗口通信
 
 - 窗口间不直接通信，统一经 Rust 中转：前端 A `invoke` → Rust `emit` → 前端 B `listen`。
-- 事件命名 `qq://` 前缀：`stream`（delta/done/error）、`active`（网页当前会话）、
-  `refresh`（数据已变，请重载）、`select`（定位某条问答）、`hotkey-input`、`settings-changed`。
+- 事件命名 `qq://` 前缀：`stream`（delta/done/error）、`active`（网页当前会话；
+  发送成功后与手动切换后都会广播）、`refresh`（数据已变，请重载）、`select`（定位某条问答）、
+  `hotkey-input`、`settings-changed`。
 - 后端事件是全局广播：每个实例用 `pendingExchangeIdRef` 只认自己发起的那一轮。
 
 ## 6. 设计令牌（src/styles/tokens.css）

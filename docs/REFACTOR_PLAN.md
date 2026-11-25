@@ -168,5 +168,18 @@ QuickQuestion 是**驾驶 DeepSeek 网页的快捷入口**。它不生产智能�
 ## 7. 实施状态
 
 全部批次完成并提交（批 0 `dfa85af`、批 1 `5252fc7`+`7175694`、批 2 `b7f14b4`、批 3 `5dfda3e`、批 4 见最新提交）。
-门禁：tsc ✅ / cargo check --tests ✅ / cargo test --lib 12 passed ✅ / vite build ✅。
+门禁：tsc ✅ / cargo check --tests ✅ / cargo test --lib 21 passed ✅ / vite build ✅。
 真机未验证项（本环境无登录态浏览器）：浏览器进程回收、多标签不误关、冷启动接续显示、注入首条、发送失败回滚。
+
+## 8. 已知未处理（待决策）
+
+写在这里而不是散在代码注释里，避免下一轮审查重复推导。
+
+1. **长问题的展示标题**（2026-11-25 定位，未实施）：`question_text` 同时充当发给 DeepSeek 的完整载荷与复制/贴图的标题，
+   长问题会让 `to_markdown` 把全文塞进剪贴板、`render-image` 超过 8000px 直接报「内容过长」。
+   推荐方向是输出侧单一派生 `questionHeadline()`（首个非空行 / 前 N 字 / 去 markdown 前缀），输入侧附件化后置；零 schema 变更。
+2. **前端无测试网**：`src/` 只有类型检查，没有运行时测试。以下重构因此被主动推迟——抽公共的流式管道 hook、
+   拆 `MainWindow` 的侧栏/详情/输入区——它们都压在核心发送路径上，没有等价性证据就动，风险大于去重收益。
+   前置条件：先引入 vitest，为 `is_complete`、接续派生这类纯函数建立回归网。
+3. **跨文件 CSS 依赖**：主窗口输入区的图片缩略图复用 `Composer.css` 的 `.composer-image-*`，靠单包全量 CSS 生效。
+   功能正常但耦合隐式；真要收口应把缩略图抽成组件，而不是复制样式。
