@@ -106,7 +106,13 @@ impl ConfigService {
         }
         let json = serde_json::to_string_pretty(&settings)
             .map_err(|e| AppError::msg(format!("配置编码失败：{e}")))?;
-        std::fs::write(&self.path, json)
+        // 先写临时文件再改名：直接写目标文件会先截断，进程在中途退出（强杀/断电）
+        // 就留下空文件，下次 load() 反序列化失败退回 Default，连用户填的长期设定一起丢。
+        // 同目录改名在 Windows 与 Unix 上都是原子替换。
+        let tmp = self.path.with_extension("json.tmp");
+        std::fs::write(&tmp, json)
+            .map_err(|e| AppError::msg(format!("保存设置失败：{e}")))?;
+        std::fs::rename(&tmp, &self.path)
             .map_err(|e| AppError::msg(format!("保存设置失败：{e}")))?;
         Ok(())
     }
@@ -161,5 +167,26 @@ mod tests {
         assert_eq!(n.bubble_hide_secs, 600);
         assert_eq!(n.popup_hide_secs, 600);
         assert_eq!(n.hotkey, "Alt+Q");
+    }
+
+    /// 保存走"临时文件 + 改名"：写完不能留下 .tmp，且内容可原样读回。
+    #[test]
+    fn save_roundtrips_and_leaves_no_temp_file() {
+        let dir = std::env::temp_dir().join(format!("qq-config-test-{}", std::process::id()));
+        let svc = ConfigService {
+            path: dir.join("settings.json"),
+        };
+        let settings = Settings {
+            system_prompt: "长期设定".into(),
+            last_session_id: "sess-9".into(),
+            ..Settings::default()
+        };
+        svc.save(&settings).expect("保存应成功");
+
+        assert_eq!(svc.load().system_prompt, "长期设定");
+        assert_eq!(svc.load().last_session_id, "sess-9");
+        assert!(!dir.join("settings.json.tmp").exists(), "不应残留临时文件");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

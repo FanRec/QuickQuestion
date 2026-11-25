@@ -177,7 +177,12 @@ async fn send_inner(
     // 记住旧恢复点：回复阶段失败（超时/取消/登录失效）时要还原，避免下次启动进空会话。
     let old_last_session = settings.last_session_id.clone();
     if let Some(sid) = &new_session_id {
-        state.config.set_last_session(sid)?;
+        // 写恢复点失败不能中断本轮：消息此时已经在网页上了，返回 Err 只会让前端
+        // 退出流态、把已经收到的回答丢在网页端，本地还留下一个空会话。
+        // 退化为日志——接续记录仍会随 done 落库，只是下次启动少一次自动恢复。
+        if let Err(e) = state.config.set_last_session(sid) {
+            eprintln!("保存启动恢复点失败：{e}");
+        }
     }
 
     let app_for_task = app.clone();
