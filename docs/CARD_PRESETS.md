@@ -50,6 +50,7 @@ card-presets/
 |---|---|
 | `--qq-frame-bg` / `--qq-card-bg` | 外框 / 卡片背景，`background` 简写可用渐变或图片 |
 | `--qq-frame-pad` / `--qq-frame-radius` / `--qq-card-radius` | 外边距与圆角 |
+| `--qq-card-pad-top` / `--qq-card-pad-x` / `--qq-card-pad-bottom` | 卡片内边距；隐藏装饰后可调小底部留白 |
 | `--qq-border` / `--qq-shadow` | 卡片描边与阴影 |
 | `--qq-title` / `--qq-body` / `--qq-muted` | 标题、正文、次要文字颜色 |
 | `--qq-accent` / `--qq-badge` / `--qq-rule` | 强调色、序号徽标、分隔线 |
@@ -69,6 +70,8 @@ card-presets/
 - `top.svg` → `--qq-decor-top-image`
 - `bottom.svg` → `--qq-decor-bottom-image`
 - `mascot.png` → `--qq-mascot-image`
+
+资源默认值会同时写在 `.qq-frame` 与 `.qq-frame[data-qq-theme="dark"]` 上，以免基线暗色 token 因选择器优先级更高而盖掉图片；`tokens.css` 里用同样的选择器即可覆盖。
 
 原因：渲染走 SVG-as-image 隔离文档，任何 `file://` / `asset://` / 相对路径外链都不会加载。如果自己写装饰 SVG，**颜色要写成字面色值**，不要用 `var(--qq-*)`——SVG 表现属性不认 CSS 变量。
 

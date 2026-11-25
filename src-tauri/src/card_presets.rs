@@ -67,7 +67,7 @@ impl CardPresets {
         Ok(result)
     }
 
-    /// 元数据损坏时以目录名作为 label，并给出可见提示，而不是整条预设消失。
+    /// 元数据损坏时以目录名作为 label，不阻止整条预设被加载。
     fn meta(&self, dir: &Path, id: &str) -> (String, String) {
         let parsed = fs::read_to_string(dir.join("preset.json"))
             .ok()
@@ -134,7 +134,13 @@ impl CardPresets {
             } else {
                 format!("url(\"data:{mime};base64,{encoded}\")")
             };
-            assets.push_str(&format!(".qq-frame{{{var}:{value}}}\n"));
+            // 基线里的暗色 token 用了 .qq-frame[data-qq-theme="dark"]，
+            // 单写 .qq-frame 会被更高优先级覆盖，暗色主题永远看不到用户图片。
+            // 两种选择器都写，tokens.css 仍能按同样的优先级覆盖资源默认值。
+            let decl = format!("{var}:{value};");
+            assets.push_str(&format!(
+                ".qq-frame{{{decl}}}.qq-frame[data-qq-theme=\"dark\"]{{{decl}}}\n"
+            ));
         }
         Ok(format!("{assets}\n{tokens}"))
     }
@@ -240,6 +246,7 @@ mod tests {
         let css = CardPresets::with_root(root).load_css("mine").unwrap();
         assert!(css.contains("--qq-decor-top-image:url(\"data:image/svg+xml;base64,"));
         assert!(css.contains("--qq-frame-bg:url(\"data:image/png;base64,"));
+        assert!(css.contains(".qq-frame[data-qq-theme=\"dark\"]{--qq-frame-bg:"));
         assert!(css.contains("--qq-title:#123456"));
     }
 

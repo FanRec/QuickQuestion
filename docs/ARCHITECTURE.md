@@ -131,7 +131,7 @@ S1–S3 阴影、160ms `cubic-bezier(.2,.8,.2,1)` 动效、明暗双主题（`:r
 
 贴图是导出函数 `PNG = Render(content, theme, presetCss)`。骨架（DOM、markdown、高亮、公式、尺寸）由 `card-css.ts` 固定，预设只通过 `--qq-*` 变量覆盖外观；主题是正交轴，渲染时在 `.qq-frame` 上写 `data-qq-theme`，一份预设可带两套颜色。
 
-预设来源两条，返回同一种 CSS 片段：内置的 `classic`/`plain` 在前端常量里；用户预设放在 `%LOCALAPPDATA%/QuickQuestion/card-presets/<id>/`，由 `card_presets.rs` 读取 `tokens.css` 并把约定资源文件转成 data URI 后返回。设置只存预设 id，不存 CSS——用户改文件后刷新即可生效，不产生第二份真相。预览卡片与真实贴图调用同一个 `markdownToPng`，所见即所得；预设加载失败显式报错，不静默回退。完整契约见 [CARD_PRESETS.md](CARD_PRESETS.md)。
+预设来源两条，返回同一种 CSS 片段：内置的 `classic`/`plain` 在前端常量里（只有 id/label 的轻量元数据在 `card-preset-meta.ts`，重样式模块按需 import，避免内联资产进入主 bundle）；用户预设放在 `%LOCALAPPDATA%/QuickQuestion/card-presets/<id>/`，由 `card_presets.rs` 读取 `tokens.css` 并把约定资源文件转成 data URI 后返回。设置只存预设 id，不存 CSS——用户改文件后刷新即可生效，不产生第二份真相。预览卡片与真实贴图调用同一个 `markdownToPng`，所见即所得；预设加载失败显式报错，不静默回退。完整契约见 [CARD_PRESETS.md](CARD_PRESETS.md)。
 
 ## 7. 失败路径
 

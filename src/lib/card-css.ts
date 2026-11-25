@@ -7,13 +7,13 @@
  * 所以这里输出的是完整字面值，明暗两套都写在基线里。
  */
 import { MASCOT_DATA_URI } from "./inline-assets";
+import { BUILTIN_PRESET_META } from "./card-preset-meta";
 
 export type CardTheme = "light" | "dark";
 
 export interface CardPreset {
   id: string;
   label: string;
-  builtin: boolean;
   /** 内置预设为空串表示完全使用基线；本地预设由后端返回拼好的 CSS。 */
   css: string;
 }
@@ -115,6 +115,9 @@ function tokenBlock(selector: string, t: Tokens, top: string, bottom: string): s
 --qq-frame-pad:20px;
 --qq-frame-radius:42px;
 --qq-card-radius:30px;
+--qq-card-pad-top:46px;
+--qq-card-pad-x:48px;
+--qq-card-pad-bottom:150px;
 --qq-decor-top-image:${top};
 --qq-decor-bottom-image:${bottom};
 }`;
@@ -150,7 +153,8 @@ body{margin:0}
 }
 .qq-card{
   position:relative;overflow:hidden;width:100%;border-radius:var(--qq-card-radius);
-  padding:46px 48px 150px;background:var(--qq-card-bg);
+  padding:var(--qq-card-pad-top) var(--qq-card-pad-x) var(--qq-card-pad-bottom);
+  background:var(--qq-card-bg);
   border:1px solid var(--qq-border);box-shadow:var(--qq-shadow);
 }
 .qq-content{position:relative;z-index:1;font-size:20px;line-height:1.75}
@@ -236,8 +240,9 @@ body{margin:0}
 
 const PLAIN_CSS = `
 .qq-frame{
-  --qq-frame-bg:#f4f4f5;--qq-card-bg:#ffffff;--qq-frame-pad:16px;
+  --qq-frame-bg:#f4f4f5;--qq-card-bg:#ffffff;  --qq-frame-pad:16px;
   --qq-frame-radius:8px;--qq-card-radius:8px;--qq-border:#e4e4e7;
+  --qq-card-pad-top:28px;--qq-card-pad-x:28px;--qq-card-pad-bottom:34px;
   --qq-shadow:none;--qq-title:#27272a;--qq-body:#3f3f46;--qq-muted:#71717a;
   --qq-accent:#52525b;--qq-badge:#a1a1aa;--qq-rule:#d4d4d8;
   --qq-code-bg:#f4f4f5;--qq-code-text:#3f3f46;--qq-gutter:#a1a1aa;
@@ -256,10 +261,10 @@ const PLAIN_CSS = `
 .qq-code{border-radius:8px}
 `;
 
-export const BUILTIN_PRESETS: CardPreset[] = [
-  { id: "classic", label: "经典", builtin: true, css: "" },
-  { id: "plain", label: "朴素", builtin: true, css: PLAIN_CSS },
-];
+const BUILTIN_PRESETS: CardPreset[] = BUILTIN_PRESET_META.map((meta) => ({
+  ...meta,
+  css: meta.id === "plain" ? PLAIN_CSS : "",
+}));
 
 export function getBuiltinPreset(id: string): CardPreset | undefined {
   return BUILTIN_PRESETS.find((preset) => preset.id === id);
