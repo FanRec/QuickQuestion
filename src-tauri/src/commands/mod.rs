@@ -208,9 +208,11 @@ async fn send_inner(
     // 失败收口所需的信息随任务移动：新建会话 id 与旧恢复点。
     let rollback_session = new_session_id.clone();
     let config_for_task = state.config.clone();
-    // 接续会话已知 chat_id，无需在 done 时刻再抓 URL（可能还没切稳）。
-    let known_chat_id = chosen.deepseek_chat_id.clone();
-    tauri::async_runtime::spawn(async move {
+                    // 接续会话已知 chat_id，无需在 done 时刻再抓 URL（可能还没切稳）。
+                    // 新会话若此刻仍为空，记录"待补绑"，落库后在后台继续等 URL 切稳。
+                    let known_chat_id = chosen.deepseek_chat_id.clone();
+                    let need_bind_backfill = known_chat_id.is_empty();
+                    tauri::async_runtime::spawn(async move {
         // guard 随任务持有发送权；任何退出路径（含 panic 前的 drop）都释放。
         while let Some(event) = rx.recv().await {
             match event {
@@ -295,6 +297,52 @@ async fn send_inner(
                             "text": answer,
                         }),
                     );
+
+                    // 新会话首条：done 时 URL 可能还没切到 /a/chat/s/{uuid}，
+                    // 此时 chat_id 为空、会话落库但未绑定，下次发送会另起新会话。
+                    // 回复已交付用户，这里在后台有界地再等一次 URL：拿到就补绑，
+                    // 使该会话重新具备接续能力。若期间网页已切到另一个已绑定会话
+                    // （find_by_chat_id 命中别的本地会话），放弃补绑，避免串会话。
+                    if need_bind_backfill && chat_id.is_empty() {
+                        let bg_app = app_for_task.clone();
+                        let bg_state = state_for_task.clone();
+                        let bg_cdp = cdp_for_task.clone();
+                        let bg_session = session_for_task.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let late = bg_cdp
+                                .current_chat_id_wait(std::time::Duration::from_secs(20))
+                                .await;
+                            if late.is_empty() {
+                                return;
+                            }
+                            if matches!(
+                                bg_state.store.find_by_chat_id(&late),
+                                Ok(Some(other)) if other.id != bg_session
+                            ) {
+                                return;
+                            }
+                            match bg_state.store.bind_chat_id(&bg_session, &late) {
+                                Ok(true) => {
+                                    let title = bg_state
+                                        .store
+                                        .find_session(&bg_session)
+                                        .ok()
+                                        .flatten()
+                                        .map(|s| s.title)
+                                        .unwrap_or_default();
+                                    let _ = bg_app.emit(
+                                        "qq://active",
+                                        serde_json::json!({
+                                            "sessionId": bg_session,
+                                            "title": title,
+                                        }),
+                                    );
+                                }
+                                Ok(false) => {}
+                                Err(e) => eprintln!("补绑网页会话失败：{e}"),
+                            }
+                        });
+                    }
                     // 不再 unsubscribe：finish 已把订阅者 take 走。此时再清一次要么空转，
                     // 要么清掉下一轮刚安装的订阅者（用户收到 done 后立刻追问的窗口）。
                     break;

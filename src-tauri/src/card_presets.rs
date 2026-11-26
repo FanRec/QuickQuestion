@@ -24,13 +24,20 @@ pub struct CardPresets {
     root: PathBuf,
 }
 
+impl Default for CardPresets {
+    fn default() -> Self {
+        Self {
+            root: dirs::data_local_dir()
+                .unwrap_or_else(std::env::temp_dir)
+                .join("QuickQuestion")
+                .join("card-presets"),
+        }
+    }
+}
+
 impl CardPresets {
     pub fn new() -> Self {
-        let root = dirs::data_local_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("QuickQuestion")
-            .join("card-presets");
-        Self { root }
+        Self::default()
     }
 
     #[cfg(test)]
@@ -158,7 +165,7 @@ impl CardPresets {
 /// 不为此引入新依赖（离线环境无法拉取 crate）。
 fn base64_encode(data: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     let mut i = 0;
     while i + 3 <= data.len() {
         let n = ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8) | data[i + 2] as u32;

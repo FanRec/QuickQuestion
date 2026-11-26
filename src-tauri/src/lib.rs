@@ -178,6 +178,14 @@ pub fn run() {
         });
 }
 
+/// 托盘/菜单唤起窗口：必须先 unminimize，最小化状态下 show() 不会还原窗口。
+/// 与前端 windows.ts 的 showWindow 保持同一语义，避免两处行为漂移。
+fn restore_window(win: &tauri::WebviewWindow) {
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+}
+
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show_orb = MenuItem::new(app, "显示悬浮球", true, None::<&str>)?;
     let open_main = MenuItem::new(app, "打开主窗口", true, None::<&str>)?;
@@ -200,14 +208,12 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .on_menu_event(move |app, event| match event.id.as_ref() {
             id if id == show_orb_id.as_ref() => {
                 if let Some(win) = app.get_webview_window("panel") {
-                    let _ = win.show();
-                    let _ = win.set_focus();
+                    restore_window(&win);
                 }
             }
             id if id == open_main_id.as_ref() => {
                 if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.set_focus();
+                    restore_window(&win);
                 }
             }
             id if id == quit_id.as_ref() => {
@@ -229,8 +235,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             {
                 let app = tray.app_handle();
                 if let Some(win) = app.get_webview_window("panel") {
-                    let _ = win.show();
-                    let _ = win.set_focus();
+                    restore_window(&win);
                 }
             }
         })

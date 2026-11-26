@@ -36,6 +36,22 @@ export function PanelWindow() {
   const [items, setItems] = useState<Exchange[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
+  // 单一提示计时器：连续复制/删除时旧 timer 不能提前抹掉新提示。
+  // 与主窗口 flashNotice 同源做法，卸载时清理。
+  const noticeTimer = useRef<number | undefined>(undefined);
+  const copiedTimer = useRef<number | undefined>(undefined);
+  const flash = useCallback((text: string | null, ms: number) => {
+    window.clearTimeout(noticeTimer.current);
+    setCopyError(text);
+    if (text) noticeTimer.current = window.setTimeout(() => setCopyError(null), ms);
+  }, []);
+  useEffect(
+    () => () => {
+      window.clearTimeout(noticeTimer.current);
+      window.clearTimeout(copiedTimer.current);
+    },
+    [],
+  );
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyMenu, setHistoryMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const dragRef = useRef({ x: 0, y: 0, moved: false });
@@ -185,13 +201,13 @@ export function PanelWindow() {
   const copyItem = async (id: string) => {
     try {
       await copyAsRichText(id);
+      window.clearTimeout(copiedTimer.current);
       setCopiedId(id);
-      setCopyError(null);
-      window.setTimeout(() => setCopiedId(null), 1500);
+      copiedTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
+      flash(null, 0);
     } catch (e) {
       setCopiedId(null);
-      setCopyError(`复制失败：${errText(e)}`);
-      window.setTimeout(() => setCopyError(null), 4000);
+      flash(`复制失败：${errText(e)}`, 4000);
     }
   };
 
@@ -199,10 +215,9 @@ export function PanelWindow() {
     setHistoryMenu(null);
     try {
       await copyAsImage(id);
-      setCopyError(null);
+      flash(null, 0);
     } catch (e) {
-      setCopyError(`贴图失败：${errText(e)}`);
-      window.setTimeout(() => setCopyError(null), 4000);
+      flash(`贴图失败：${errText(e)}`, 4000);
     }
   };
 
@@ -210,12 +225,11 @@ export function PanelWindow() {
     try {
       await deleteExchange(id);
       setItems((prev) => prev.filter((item) => item.id !== id));
-      setCopyError(null);
+      flash(null, 0);
       // 主窗口若开着，靠这条广播重载；否则会留着一行已删除的问答，点开仍是旧内容。
       void emitRefresh();
     } catch (e) {
-      setCopyError(`删除失败：${errText(e)}`);
-      window.setTimeout(() => setCopyError(null), 4000);
+      flash(`删除失败：${errText(e)}`, 4000);
     }
   };
 

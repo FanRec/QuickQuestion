@@ -814,21 +814,21 @@ impl CdpClient {
         let enter = self.evaluate(
             r#"(function(){
               var el = window.__qqInput;
-              if (!el || !el.isConnected) {{
+              if (!el || !el.isConnected) {
                 var groups = ['textarea', '[contenteditable="true"]', '[role="textbox"]'];
                 el = null;
-                for (var g = 0; g < groups.length && !el; g++) {{
+                for (var g = 0; g < groups.length && !el; g++) {
                   var list = document.querySelectorAll(groups[g]);
-                  for (var i = 0; i < list.length; i++) {{
+                  for (var i = 0; i < list.length; i++) {
                     var r = list[i].getBoundingClientRect();
                     var cs = getComputedStyle(list[i]);
                     if (!list[i].disabled && r.width >= 8 && r.height >= 8 &&
-                        cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0') {{
+                        cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0') {
                       el = list[i]; break;
-                    }}
-                  }}
-                }}
-              }}
+                    }
+                  }
+                }
+              }
               if (!el) return 'NO_INPUT';
               el.focus();
               ['keydown','keypress','keyup'].forEach(function(type){

@@ -263,6 +263,26 @@ impl SqliteStore {
         collect(rows)
     }
 
+    /// 补绑网页会话 UUID 到本地会话。
+    ///
+    /// 仅当目标会话尚未绑定时才写入，避免覆盖已确认的绑定；返回是否实际写入。
+    /// 新建会话首条回复的 chat_id 靠 done 时刻读 URL，URL 可能晚于回复完成才切稳，
+    /// 此时先落库不绑定，再由此方法补绑，防止会话永久失去接续能力。
+    pub fn bind_chat_id(&self, session_id: &str, chat_id: &str) -> Result<bool, AppError> {
+        if session_id.is_empty() || chat_id.is_empty() {
+            return Ok(false);
+        }
+        let conn = self.conn.lock().unwrap();
+        let n = conn
+            .execute(
+                "UPDATE sessions SET deepseek_chat_id = ?2
+                 WHERE id = ?1 AND deepseek_chat_id = ''",
+                params![session_id, chat_id],
+            )
+            .map_err(|e| AppError::msg(format!("补绑会话失败：{e}")))?;
+        Ok(n > 0)
+    }
+
     /// 某个会话内的问答，按时间正序（对话流顺序）。
     pub fn list_by_session(&self, session_id: &str) -> Result<Vec<Exchange>, AppError> {
         let conn = self.conn.lock().unwrap();
@@ -479,6 +499,41 @@ mod tests {
         let bound = store.find_by_chat_id("chat-abc").unwrap().unwrap();
         assert_eq!(bound.id, s.id);
         assert_eq!(bound.title, "这是问题");
+    }
+
+    /// 新建会话 done 时未抓到 chat_id → 后续补绑必须成功，且接续查询能命中。
+    #[test]
+    fn bind_chat_id_binds_unbound_session() {
+        let store = memory_store();
+        let s = store.create_session("新会话").unwrap();
+        assert!(store.bind_chat_id(&s.id, "chat-late").unwrap());
+        assert_eq!(
+            store.find_by_chat_id("chat-late").unwrap().unwrap().id,
+            s.id
+        );
+    }
+
+    /// 补绑是兜底路径，绝不能覆盖已经确认的绑定（例如用户在补绑前手动切过会话）。
+    #[test]
+    fn bind_chat_id_never_overwrites_existing_binding() {
+        let store = memory_store();
+        let s = store.create_session("新会话").unwrap();
+        assert!(store.bind_chat_id(&s.id, "chat-first").unwrap());
+        assert!(!store.bind_chat_id(&s.id, "chat-second").unwrap());
+        assert_eq!(
+            store.find_by_chat_id("chat-first").unwrap().unwrap().id,
+            s.id
+        );
+        assert!(store.find_by_chat_id("chat-second").unwrap().is_none());
+    }
+
+    /// 空 chat_id 不写入：URL 未切稳时不能把空串当成有效绑定。
+    #[test]
+    fn bind_chat_id_rejects_empty_values() {
+        let store = memory_store();
+        let s = store.create_session("新会话").unwrap();
+        assert!(!store.bind_chat_id(&s.id, "").unwrap());
+        assert!(!store.bind_chat_id("", "chat-x").unwrap());
     }
 
     #[test]
