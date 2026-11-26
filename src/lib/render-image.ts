@@ -71,7 +71,7 @@ export interface RenderedImage {
 /**
  * 把问答渲染成贴片 PNG。字体、吉祥物、装饰与预设资源都已内联，
  * 整张 SVG 自包含，drawn canvas 不会被跨域资源污染，toBlob 可用。
- * presetCss 是 resolvePresetCss 返回的完整样式片段（基线之后追加）。
+ * presetCss 是 loadPresetCss 返回的完整样式片段（基线之后追加）。
  */
 export async function markdownToPng(
   question: string,

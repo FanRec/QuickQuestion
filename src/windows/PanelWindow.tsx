@@ -4,8 +4,14 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { copyAsImage, copyAsRichText } from "../lib/copy";
 import { IconButton } from "../components/IconButton";
 import { Composer } from "../components/Composer";
-import { deleteExchange, errText, isSending, listExchanges } from "../lib/api";
-import { emitRefresh, emitSelect, onHotkeyInput, onRefresh } from "../lib/events";
+import { deleteExchange, errText, isSending, listExchanges, setPanelVisible } from "../lib/api";
+import {
+  emitRefresh,
+  emitSelect,
+  onHotkeyInput,
+  onPanelVisibility,
+  onRefresh,
+} from "../lib/events";
 import type { Exchange } from "../lib/types";
 import { questionLabel } from "../lib/types";
 import mascot from "../assets/mascot.png";
@@ -54,6 +60,8 @@ export function PanelWindow() {
   );
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyMenu, setHistoryMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  // 悬浮球右键菜单：只在球行上唤出，窗口需要临时加高才放得下。
+  const [orbMenuOpen, setOrbMenuOpen] = useState(false);
   const dragRef = useRef({ x: 0, y: 0, moved: false });
   // 内嵌输入条是否正在回复中（由 Composer 上报）。收起会卸载组件、
   // 把流式气泡一起带走，所以回复期间点球/开历史都要让位。
@@ -135,7 +143,8 @@ export function PanelWindow() {
     getCurrentWindow()
       .onCloseRequested((event) => {
         event.preventDefault();
-        void getCurrentWindow().hide();
+        // 直接 hide() 不会更新托盘菜单文案，必须走后端统一入口。
+        void setPanelVisible(false);
       })
       .then((fn) => {
         if (disposed) fn();
@@ -154,15 +163,17 @@ export function PanelWindow() {
     // contentH 首帧为 0，给个兜底避免展开瞬间先矮后长；
     // 末尾 +8 是给聚焦描边（box-shadow 不占布局）和圆角抗锯齿留的余量，
     // 否则边缘会被窗口裁掉。窗口透明，多出的像素不可见。
-    const height =
+    const baseHeight =
       mode === "history"
         ? HISTORY_H
         : mode === "input"
           ? ORB_H + Math.max(contentH, 52) + 8
           : ORB_H;
+    // 收起态只有球高，右键菜单要额外向上长一点；展开态本来就够高。
+    const height = orbMenuOpen && mode === "idle" ? baseHeight + 52 : baseHeight;
     const width = mode === "idle" ? ORB_W : PANEL_W;
     void resizePanelKeepingAnchor(height, width);
-  }, [ready, mode, contentH]);
+  }, [ready, mode, contentH, orbMenuOpen]);
 
   useEffect(() => {
     if (mode === "history") void loadHistory();
@@ -175,13 +186,25 @@ export function PanelWindow() {
   useEffect(() => {
     const ac = new AbortController();
     onRefresh(() => void loadHistory(), ac.signal);
+    // 托盘/右键把球隐藏后，附属的临时菜单不能留着：下次显示会多出一块空白。
+    onPanelVisibility((visible) => {
+      if (!visible) {
+        setOrbMenuOpen(false);
+        setHistoryMenu(null);
+      }
+    }, ac.signal);
     // Alt+Q 抢焦点：球自己的输入条若开着且没在回复，就让位收起。
     // 正在回复时不动，否则独立窗口也没法接住这轮问答。
     onHotkeyInput(() => {
-      if (modeRef.current !== "input") return;
       void (async () => {
+        if (modeRef.current !== "input") return;
         const busy = await isSending().catch(() => false);
-        if (!busy) setMode("idle");
+        // 后端权威 + 本地同步标志双保险：IPC 往返期间 isSending 可能还没翻，
+        // 而 submit 已经把 inlineBusyRef 置位；任一为忙都不能卸载 Composer。
+        // 再查一次 mode，避免 await 期间用户已手动切走后又把形态改回。
+        if (!busy && !inlineBusyRef.current && modeRef.current === "input") {
+          setMode("idle");
+        }
       })();
     }, ac.signal);
     return () => ac.abort();
@@ -279,7 +302,13 @@ export function PanelWindow() {
   };
 
   return (
-    <div className="panel-root" onContextMenu={(e) => e.preventDefault()}>
+    <div
+      className="panel-root"
+      onContextMenu={(e) => e.preventDefault()}
+      onClick={() => {
+        if (orbMenuOpen) setOrbMenuOpen(false);
+      }}
+    >
       {mode === "history" && (
         <div
           className="panel-history"
@@ -375,10 +404,21 @@ export function PanelWindow() {
                         onClick={(e) => {
                           e.stopPropagation();
                           const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                          // 菜单固定宽高，先夹回窗口内，下方放不下就翻到按钮上方。
+                          // 不这样做的话，列表末尾的「更多」菜单会被窗口底边裁掉。
+                          const menuW = 132;
+                          const menuH = 112;
+                          const x = Math.max(
+                            8,
+                            Math.min(rect.right - menuW, window.innerWidth - menuW - 8),
+                          );
+                          const below = rect.bottom + 4;
+                          const y =
+                            below + menuH > window.innerHeight
+                              ? Math.max(8, rect.top - menuH - 4)
+                              : below;
                           setHistoryMenu((prev) =>
-                            prev?.id === item.id
-                              ? null
-                              : { id: item.id, x: rect.right - 132, y: rect.bottom + 4 },
+                            prev?.id === item.id ? null : { id: item.id, x, y },
                           );
                         }}
                       >
@@ -470,10 +510,38 @@ export function PanelWindow() {
         </div>
       )}
 
+      {orbMenuOpen && (
+        <div className="panel-orb-menu" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className="panel-orb-menu-item"
+            onClick={() => {
+              setOrbMenuOpen(false);
+              void setPanelVisible(false);
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+              <path
+                d="M3 3l18 18M10.6 10.7a2 2 0 002.8 2.8M9.9 5.3A8.6 8.6 0 0112 5c4.4 0 8 3.6 8 7 0 1-.2 1.9-.6 2.8M6.3 6.5C4.3 7.9 3 10 3 12c0 3.4 3.6 7 8 7 1.6 0 3-.5 4.2-1.3"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                fill="none"
+              />
+            </svg>
+            隐藏悬浮球
+          </button>
+        </div>
+      )}
+
       <div
         className="panel-orb-row"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setOrbMenuOpen((open) => !open);
+        }}
       >
         <div
           className="orb-mini"

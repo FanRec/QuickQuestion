@@ -10,6 +10,7 @@
 
 - **悬浮球**：拖到顺手的位置常驻。点大球展开输入条（答案在上方气泡流式显示），
   点小球展开「今天/昨天/更早」分组的历史列表，支持搜索、复制、删除。
+  右键球可隐藏；状态栏图标右键菜单的「显示/隐藏悬浮球」随当前状态切换，左键图标可直接显示。
 - **独立输入条**：任意界面按 `Alt+Q`（可改），在鼠标位置弹出同一条输入条，
   支持单独拖动；可在设置里开启空闲后自动收起。
 - **主窗口**：会话树 + 搜索 + 完整问答详情；代码块带语言名与复制按钮；
@@ -31,8 +32,8 @@
 
 ## 环境要求
 
-- Windows 10/11；或 Linux（glibc ≥ 2.35 且系统提供 webkit2gtk-4.1：Ubuntu 22.04+ / Debian 12+ / Fedora 40+）
-- 已安装 Edge 或 Chrome
+- Windows 10/11；macOS（Apple Silicon / Intel）；或 Linux（glibc ≥ 2.35 且系统提供 webkit2gtk-4.1：Ubuntu 22.04+ / Debian 12+ / Fedora 40+）
+- 已安装 Edge 或 Chrome（Windows / Linux；macOS 使用系统 WebView）
 - 一个能登录 [chat.deepseek.com](https://chat.deepseek.com) 的账号
 
 ## 下载安装
@@ -52,8 +53,10 @@ npm install
 npm run tauri dev     # 开发调试
 npm run tauri build   # 产出安装包（NSIS / MSI）
 
-# 调整贴片样式后重生成字体内联模块（KaTeX 升级时也需要）：
+# 调整内置贴片资源后重生成内联模块（KaTeX 升级时也需要）：
 npm run gen:inline-assets
+# 调整 src-tauri/icons/icon.png 后重生成各尺寸应用图标：
+npm run gen:icon
 # npm run dev 后浏览器访问 /render-preview.html 可预览贴片效果（需经 Vite，裸打开无效）
 ```
 
@@ -72,7 +75,8 @@ npm run gen:inline-assets
 应用启动一个带 `--remote-debugging-port` 的专用浏览器实例（独立 profile，
 不影响你日常用的浏览器），经 CDP 向 DeepSeek 页面注入探测与输入脚本，
 轮询读取本轮新回复并推送到气泡。架构与数据流详见
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)；历史重构方案与保留的未决项见
+[docs/REFACTOR_PLAN.md](docs/REFACTOR_PLAN.md)。
 
 ## 声明
 

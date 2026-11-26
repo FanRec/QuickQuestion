@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
@@ -66,6 +68,9 @@ impl Default for Settings {
 #[derive(Clone)]
 pub struct ConfigService {
     path: std::path::PathBuf,
+    /// 把 read-modify-write 收进同一把锁：发送落库、用户切会话、保存设置
+    /// 可能并发发生，裸 load→改→save 会让后写覆盖前写。
+    write_lock: Arc<Mutex<()>>,
 }
 
 impl ConfigService {
@@ -75,10 +80,15 @@ impl ConfigService {
             .join("QuickQuestion");
         Self {
             path: dir.join("settings.json"),
+            write_lock: Arc::new(Mutex::new(())),
         }
     }
 
     pub fn load(&self) -> Settings {
+        self.load_inner()
+    }
+
+    fn load_inner(&self) -> Settings {
         std::fs::read_to_string(&self.path)
             .ok()
             .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
@@ -88,25 +98,33 @@ impl ConfigService {
 
     /// 只更新启动恢复点，不动其他字段。last_session_id 的单一写入口。
     pub fn set_last_session(&self, id: &str) -> Result<(), AppError> {
-        let mut settings = self.load();
+        let _guard = self.write_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut settings = self.load_inner();
         settings.last_session_id = id.to_string();
-        self.save(&settings)
+        self.save_inner(&settings)
     }
 
     /// CAS 回滚恢复点：仅当当前值仍等于 expected（本轮写入的值、期间未被用户改动）
     /// 时才写回 target。避免回复失败时把用户期间主动切换的会话覆盖成旧快照。
     /// 返回是否实际写入。
     pub fn restore_last_session_if(&self, expected: &str, target: &str) -> Result<bool, AppError> {
-        let mut settings = self.load();
+        let _guard = self.write_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut settings = self.load_inner();
         if settings.last_session_id != expected {
             return Ok(false);
         }
         settings.last_session_id = target.to_string();
-        self.save(&settings)?;
+        self.save_inner(&settings)?;
         Ok(true)
     }
 
     pub fn save(&self, settings: &Settings) -> Result<(), AppError> {
+        let _guard = self.write_lock.lock().unwrap_or_else(|e| e.into_inner());
+        self.save_inner(settings)
+    }
+
+    /// 不加锁的实际写盘；只供已持有 write_lock 的方法调用，避免嵌套死锁。
+    fn save_inner(&self, settings: &Settings) -> Result<(), AppError> {
         let settings = normalize(settings.clone());
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)
@@ -190,6 +208,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("qq-config-test-{}", std::process::id()));
         let svc = ConfigService {
             path: dir.join("settings.json"),
+            write_lock: Arc::new(Mutex::new(())),
         };
         let settings = Settings {
             system_prompt: "长期设定".into(),

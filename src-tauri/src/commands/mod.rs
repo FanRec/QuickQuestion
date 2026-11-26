@@ -1,4 +1,6 @@
+use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
@@ -9,6 +11,13 @@ use crate::error::AppError;
 use crate::model::{BrowserStatus, Exchange, Session};
 use crate::store::to_markdown;
 use crate::AppState;
+
+/// 前端隐藏悬浮球（右键菜单 / Alt+F4）时统一走后端，
+/// 保证托盘文案与窗口实际可见性一致。
+#[tauri::command]
+pub fn set_panel_visible(app: AppHandle, visible: bool) {
+    crate::tray::set_panel_visible(&app, visible);
+}
 
 /// 确保浏览器与 CDP 就绪，返回可展示的连接状态。
 #[tauri::command]
@@ -208,11 +217,11 @@ async fn send_inner(
     // 失败收口所需的信息随任务移动：新建会话 id 与旧恢复点。
     let rollback_session = new_session_id.clone();
     let config_for_task = state.config.clone();
-                    // 接续会话已知 chat_id，无需在 done 时刻再抓 URL（可能还没切稳）。
-                    // 新会话若此刻仍为空，记录"待补绑"，落库后在后台继续等 URL 切稳。
-                    let known_chat_id = chosen.deepseek_chat_id.clone();
-                    let need_bind_backfill = known_chat_id.is_empty();
-                    tauri::async_runtime::spawn(async move {
+    // 接续会话已知 chat_id，无需在 done 时刻再抓 URL（可能还没切稳）。
+    // 新会话若此刻仍为空，记录"待补绑"，落库后在后台继续等 URL 切稳。
+    let known_chat_id = chosen.deepseek_chat_id.clone();
+    let need_bind_backfill = known_chat_id.is_empty();
+    tauri::async_runtime::spawn(async move {
         // guard 随任务持有发送权；任何退出路径（含 panic 前的 drop）都释放。
         while let Some(event) = rx.recv().await {
             match event {
@@ -513,6 +522,31 @@ pub async fn open_login_window(state: State<'_, Arc<AppState>>) -> Result<(), Ap
     cdp.show_browser_window().await
 }
 
+/// 粘贴图片只用于本轮上传，落库后不再被读取。给个有界 TTL，
+/// 每次粘贴前顺手清一次陈年文件，避免应用数据目录无限增长。
+const PASTED_IMAGE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn cleanup_old_pasted(dir: &Path, now: SystemTime, ttl: Duration) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        // 文件写入后不再改动，modified 就是生成时间；比 created 跨平台可靠。
+        let Ok(stamp) = meta.modified() else {
+            continue;
+        };
+        if now.duration_since(stamp).unwrap_or_default() > ttl {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// 把粘贴进来的图片字节落盘，返回路径供 CDP 上传使用。
 /// 放在应用数据目录而非系统 Temp，方便用户自行清理。
 #[tauri::command]
@@ -530,6 +564,7 @@ pub fn save_temp_image(bytes: Vec<u8>, ext: String) -> Result<String, AppError> 
         .join("pasted");
     std::fs::create_dir_all(&dir)
         .map_err(|e| AppError::msg(format!("创建粘贴目录失败：{e}")))?;
+    cleanup_old_pasted(&dir, SystemTime::now(), PASTED_IMAGE_TTL);
     let path = dir.join(format!("paste-{}.{ext}", Uuid::new_v4()));
     std::fs::write(&path, bytes).map_err(|e| AppError::msg(format!("写入粘贴图片失败：{e}")))?;
     Ok(path.to_string_lossy().to_string())
@@ -599,7 +634,8 @@ fn needs_navigate(current_chat_id: &str, target_chat_id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::needs_navigate;
+    use super::{cleanup_old_pasted, needs_navigate};
+    use std::time::{Duration, SystemTime};
 
     // 已在目标会话：跳过整页导航，避免连续追问时重载页面。
     #[test]
@@ -617,5 +653,28 @@ mod tests {
     fn navigates_when_target_chat_differs() {
         assert!(needs_navigate("chat-1", "chat-2"));
         assert!(needs_navigate("", "chat-2"));
+    }
+
+    /// 粘贴图片只在发送时上传一次；TTL 清理不能误删刚粘贴、仍在使用的文件。
+    #[test]
+    fn cleanup_removes_only_expired_pasted_images() {
+        let dir = std::env::temp_dir().join(format!("qq-pasted-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("创建测试目录");
+        let old = dir.join("paste-old.png");
+        let fresh = dir.join("paste-fresh.png");
+        std::fs::write(&old, b"old").expect("写入旧文件");
+        std::fs::write(&fresh, b"fresh").expect("写入新文件");
+        let old_time = SystemTime::now() - Duration::from_secs(48 * 60 * 60);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&old)
+            .and_then(|f| f.set_modified(old_time))
+            .expect("回拨旧文件时间");
+
+        cleanup_old_pasted(&dir, SystemTime::now(), Duration::from_secs(24 * 60 * 60));
+
+        assert!(!old.exists(), "过期文件应被清理");
+        assert!(fresh.exists(), "新文件必须保留");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

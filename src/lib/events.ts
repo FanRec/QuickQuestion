@@ -73,6 +73,11 @@ export function onHotkeyInput(handler: () => void, signal?: AbortSignal) {
   return guarded("qq://hotkey-input", () => handler(), signal);
 }
 
+/// 悬浮球可见性由后端广播；前端据此收起临时右键菜单等附属 UI。
+export function onPanelVisibility(handler: (visible: boolean) => void, signal?: AbortSignal) {
+  return guarded<boolean>("qq://panel-visibility", handler, signal);
+}
+
 /// 设置已保存：两套输入条据此重新读取自动消失等配置。
 export function onSettingsChanged(handler: () => void, signal?: AbortSignal) {
   return guarded("qq://settings-changed", () => handler(), signal);

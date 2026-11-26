@@ -9,7 +9,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "gen:inline-assets": "node scripts/gen-inline-assets.mjs"
+    "gen:inline-assets": "node scripts/gen-inline-assets.mjs",
+    "gen:icon": "node scripts/gen-icon.mjs"
   },
   "dependencies": {
     "@mdit/plugin-katex": "^1.2.0",

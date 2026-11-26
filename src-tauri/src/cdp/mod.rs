@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex, Notify};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use crate::error::AppError;
@@ -332,6 +332,9 @@ pub struct CdpClient {
     alive: Arc<AtomicBool>,
     /// 取消标志；cancel_current 置 true，轮询任务据此停止。
     cancelled: Arc<AtomicBool>,
+    /// 每轮独立的唤醒器：取消时立刻打断轮询的 sleep / read_reply，
+    /// 不必等下一次 80ms tick 或 3s CDP 超时才释放发送权。
+    cancel_notify: StdMutex<Arc<Notify>>,
     sender: Mutex<futures_util::stream::SplitSink<
         tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
         Message,
@@ -385,6 +388,7 @@ impl CdpClient {
             subscriber,
             alive,
             cancelled: Arc::new(AtomicBool::new(false)),
+            cancel_notify: StdMutex::new(Arc::new(Notify::new())),
             sender: Mutex::new(sender),
         };
 
@@ -525,11 +529,16 @@ impl CdpClient {
     /// 注意：网页端的生成无法被强制停止，这里只停止本机接收。
     pub fn cancel_current(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
+        // notify_waiters 只唤醒正在等待的轮询器；若它在检查标志与进入等待之间，
+        // 循环开头/读取前的 cancelled 检查会兜住，不会丢取消。
+        self.cancel_notify.lock().unwrap().notify_waiters();
     }
 
-    /// 开始新一轮前重置取消标志。
+    /// 开始新一轮前重置取消标志，并换一个全新的唤醒器，
+    /// 避免上一轮遗留的 Notify 把新一轮误唤醒。
     pub fn reset_cancel(&self) {
         self.cancelled.store(false, Ordering::SeqCst);
+        *self.cancel_notify.lock().unwrap() = Arc::new(Notify::new());
     }
 
     /// 导航到指定地址并等待输入框就绪。切会话和开新会话共用。
@@ -856,6 +865,15 @@ impl CdpClient {
         }
     }
 
+    /// 用户取消的统一终态：emit 由命令层的事件循环处理，这里只投递事件。
+    async fn finish_cancelled(&self) {
+        self.finish(StreamEvent::Error {
+            message: "已取消".to_string(),
+            kind: None,
+        })
+        .await;
+    }
+
     /// Rust 侧轮询回复并推送事件。新回复靠"发送前快照之外的锚点"识别；完成判定见 `is_complete`：
     /// 生成停止 + 文本静默为主，另有独立于按钮状态的静默兜底。
     pub fn spawn_reply_poller(self: Arc<Self>, quiet_ms: u64) {
@@ -875,6 +893,8 @@ impl CdpClient {
             let mut last_login_check = std::time::Instant::now() - LOGIN_CHECK_INTERVAL;
             // CDP 单次往返实测约 1.2ms，80ms 轮询即可接近实时且仍有充足余量。
             let tick = Duration::from_millis(POLL_TICK_MS);
+            // 本轮独立的取消唤醒器，在 send_inner 的 reset_cancel 中安装。
+            let cancel_notify = self.cancel_notify.lock().unwrap().clone();
             // 发送前的 navigate_and_wait 已等 input_ready 并额外稳定 400ms，
             // 这里不再重复冷启动等待，否则正文开头必然延迟。
 
@@ -888,36 +908,54 @@ impl CdpClient {
                     return;
                 }
                 if self.cancelled.load(Ordering::SeqCst) {
-                    self.finish(StreamEvent::Error {
-                        message: "已取消".to_string(),
-                        kind: None,
-                    })
-                    .await;
+                    self.finish_cancelled().await;
                     return;
                 }
-                tokio::time::sleep(tick).await;
-                let (found, text, generating) = match self.read_reply().await {
-                    Ok(v) => {
-                        consecutive_errors = 0;
-                        v
-                    }
-                    Err(e) => {
-                        consecutive_errors += 1;
-                        // 保留首个错误（最有诊断价值），后续失败不覆盖。
-                        if last_error.is_none() {
-                            last_error = Some(e.message);
-                        }
-                        // 导航期偶尔失败属正常；连续约 3s 都失败说明脚本持续异常。
-                        if consecutive_errors >= CONSECUTIVE_ERROR_LIMIT {
-                            let detail = last_error.unwrap_or_default();
-                            self.finish(StreamEvent::Error {
-                                message: format!("读取回复持续失败：{detail}"),
-                                kind: None,
-                            })
-                            .await;
+                // 取消必须能打断等待，否则一次打断最长要等 80ms tick 或 3s CDP 超时，
+                // 发送权迟迟不释放，用户连发时会被"正在回复中"挡住。
+                tokio::select! {
+                    _ = tokio::time::sleep(tick) => {}
+                    _ = cancel_notify.notified() => {
+                        if self.cancelled.load(Ordering::SeqCst) {
+                            self.finish_cancelled().await;
                             return;
                         }
-                        continue;
+                    }
+                }
+                // 取消可能刚好落在上面 select 完成之后、下面 notified() 注册之前；
+                // notify_waiters 不会补发，这里按标志再兜一次。
+                if self.cancelled.load(Ordering::SeqCst) {
+                    self.finish_cancelled().await;
+                    return;
+                }
+                let (found, text, generating) = tokio::select! {
+                    reply = self.read_reply() => match reply {
+                        Ok(v) => {
+                            consecutive_errors = 0;
+                            v
+                        }
+                        Err(e) => {
+                            consecutive_errors += 1;
+                            // 保留首个错误（最有诊断价值），后续失败不覆盖。
+                            if last_error.is_none() {
+                                last_error = Some(e.message);
+                            }
+                            // 导航期偶尔失败属正常；连续约 3s 都失败说明脚本持续异常。
+                            if consecutive_errors >= CONSECUTIVE_ERROR_LIMIT {
+                                let detail = last_error.unwrap_or_default();
+                                self.finish(StreamEvent::Error {
+                                    message: format!("读取回复持续失败：{detail}"),
+                                    kind: None,
+                                })
+                                .await;
+                                return;
+                            }
+                            continue;
+                        }
+                    },
+                    _ = cancel_notify.notified() => {
+                        self.finish_cancelled().await;
+                        return;
                     }
                 };
                 // 新消息节点还没渲染（思考/搜索阶段正文为空），继续等。

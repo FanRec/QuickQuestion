@@ -6,6 +6,11 @@ export interface SendResult {
   sessionId: string;
 }
 
+/** 隐藏悬浮球。必须走后端，托盘菜单文案才能跟着变。 */
+export function setPanelVisible(visible: boolean): Promise<void> {
+  return invoke<void>("set_panel_visible", { visible });
+}
+
 /** 发送消息。会话编排在后端完成；前端只表达"是否要开新会话"的意图。 */
 export function sendMessage(input: {
   text: string;

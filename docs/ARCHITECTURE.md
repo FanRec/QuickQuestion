@@ -20,7 +20,7 @@
 │  delete_exchange · copy_markdown · save_temp_image       │
 │  open_login_window · browser_status · get_settings       │
 │  update_settings · list_card_presets · load_card_preset   │
-│  open_card_presets_dir                                   │
+│  open_card_presets_dir · set_panel_visible                │
 └──────────────────────┬───────────────────────────────────┘
 ┌──────────────────────▼───────────────────────────────────┐
 │  Rust 内核 (src-tauri/src/)                              │
@@ -29,6 +29,7 @@
 │  store/      SQLite 仓储（Session / Exchange 单一数据源） │
 │  config.rs   settings.json 读写                          │
 │  card_presets.rs  用户贴图预设目录扫描与资源内联          │
+│  tray.rs     托盘菜单与悬浮球可见性单点控制                │
 │  commands/   IPC 实现，唯一编排层                         │
 │  model.rs    Session / Exchange / BrowserStatus 领域类型 │
 └──────────────────────┬───────────────────────────────────┘
@@ -123,8 +124,10 @@ SPA 导航可能晚于回复完成。拿不到时先照常落库并交付答案�
 - 窗口间不直接通信，统一经 Rust 中转：前端 A `invoke` → Rust `emit` → 前端 B `listen`。
 - 事件命名 `qq://` 前缀：`stream`（start/delta/done/error；start 在轮询启动前携带本轮 exchangeId，让前端早于 IPC 返回认领本轮）、`active`（网页当前会话；
   发送成功后与手动切换后都会广播）、`refresh`（数据已变，请重载）、`select`（定位某条问答）、
-  `hotkey-input`、`settings-changed`。
+  `hotkey-input`、`settings-changed`、`panel-visibility`（悬浮球显示状态）。
 - 后端事件是全局广播：每个实例用 `pendingExchangeIdRef` 只认自己发起的那一轮。
+- 悬浮球可见性由后端 `set_panel_visible` 单点收口：托盘菜单、托盘左键、球右键菜单、Alt+F4
+  都走它，实际窗口状态与托盘文案一起更新，再广播给前端收起临时 UI。
 
 ## 6. 设计令牌（src/styles/tokens.css）
 

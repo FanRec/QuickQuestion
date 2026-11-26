@@ -93,6 +93,7 @@ export function HelpPanel() {
           <h3 className="help-title">悬浮球</h3>
           <ul className="help-list">
             <li><strong>大球</strong>展开/收起输入条，<strong>小球</strong>展开/收起历史列表。</li>
+            <li>右键球可隐藏。状态栏图标右键菜单的「显示/隐藏悬浮球」会按当前状态切换，左键图标可直接显示。</li>
             <li>整块都能拖动；展开时球本身的位置不会移动。</li>
             <li>历史条目右侧两个图标：直接复制整条问答，以及「更多」菜单（查看 / 复制为图片 / 删除）。</li>
           </ul>

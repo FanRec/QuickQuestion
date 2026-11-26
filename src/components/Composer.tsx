@@ -167,6 +167,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
         setAnswer(payload.text);
       } else if (payload.type === "done") {
         streamingRef.current = false;
+        onBusyChange?.(false);
         setExchangeId(payload.exchangeId);
         setAnswer(payload.text);
         setStreaming(false);
@@ -178,6 +179,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
         }
       } else {
         streamingRef.current = false;
+        onBusyChange?.(false);
         setError(payload.message);
         setErrorKind(payload.kind);
         setStreaming(false);
@@ -232,6 +234,9 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
     setErrorKind(undefined);
     setExchangeId(null);
     streamingRef.current = true;
+    // 宿主（球窗口）要在 IPC 往返之前就知道忙，否则 Alt+Q 抢焦点时
+    // 会先收起输入条、再让 isSending 返回 true，把正在进行的回复一起卸载。
+    onBusyChange?.(true);
     setStreaming(true);
     pendingExchangeIdRef.current = null;
     setText("");
@@ -253,6 +258,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
       setNewSession(false);
     } catch (e) {
       streamingRef.current = false;
+      onBusyChange?.(false);
       // 失败要把文字和图片还回输入条：它们只在这一处持有，清掉就等于让用户重打重贴。
       // 撑高要等回填渲染提交后再按 scrollHeight 重算（发送时已重置为 24px）。
       setText(value);
@@ -271,6 +277,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
   const cancel = () => {
     void cancelMessage();
     streamingRef.current = false;
+    onBusyChange?.(false);
     setStreaming(false);
     setAnswer(null);
     setExchangeId(null);

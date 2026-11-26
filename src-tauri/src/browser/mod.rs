@@ -48,7 +48,9 @@ impl BrowserManager {
         let profile = self.profile_dir.to_string_lossy();
         let args = [
             format!("--remote-debugging-port={}", self.port),
-            "--remote-allow-origins=*".to_string(),
+            // 不开 --remote-allow-origins=*：CDP 客户端不发送 Origin 头，
+            // Chromium 允许无 Origin 的本地调试连接；开放通配符会把调试端口
+            // 变成任意网页可访问的接口。
             format!("--user-data-dir={profile}"),
             "--no-first-run".to_string(),
             "--no-default-browser-check".to_string(),

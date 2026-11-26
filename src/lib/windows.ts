@@ -46,23 +46,29 @@ function enqueueGeometry<T>(key: string, task: () => Promise<T>): Promise<T> {
 /// - 拖动等外部移动由组件在 onMoved 事件里回填（noteWindowPosition）。
 type Geometry = { x: number; y: number; w: number; h: number };
 const geometries = new Map<string, Geometry>();
-/// 各窗口最近一次写入缓存的时间。写入后短暂窗口内的 Moved 事件一律忽略：
-/// 自己的 setPosition 也会触发 Moved，晚到的旧事件会把新缓存拖回旧值。
-const lastWriteAt = new Map<string, number>();
-const MOVE_GUARD_MS = 150;
+/// 自己写过的坐标队列。setPosition 会触发 Moved，晚到的回显必须按"值"丢弃，
+/// 不能按时间窗丢弃：右键菜单连续开关时两次写入可能相隔不到 150ms，
+/// 时间窗会把真正的外部拖动一起吞掉。队列只留最近几次写入，足够覆盖异步回显。
+const recentWrites = new Map<string, { x: number; y: number }[]>();
+const MAX_RECENT_WRITES = 4;
 
-/** 拖动等外部移动后回填缓存。 */
+/** 拖动等外部移动后回填缓存；自己写入的回显直接丢弃。 */
 export function noteWindowPosition(label: WindowLabel, x: number, y: number) {
   const g = geometries.get(label);
   if (!g) return;
-  if (Date.now() - (lastWriteAt.get(label) ?? 0) < MOVE_GUARD_MS) return;
+  if ((recentWrites.get(label) ?? []).some((p) => p.x === x && p.y === y)) return;
+  // 确认是外部移动后清空回显队列，避免旧写入继续遮蔽后续拖动。
+  recentWrites.delete(label);
   geometries.set(label, { ...g, x, y });
 }
 
-/** 几何操作写入：既记目标值，也记写入时间供 Moved 事件守卫用。 */
+/** 几何操作写入：记目标值，供 onMoved 区分"自己的回显"与"用户拖动"。 */
 function rememberGeometry(label: WindowLabel, g: Geometry) {
   geometries.set(label, g);
-  lastWriteAt.set(label, Date.now());
+  const writes = recentWrites.get(label) ?? [];
+  writes.push({ x: g.x, y: g.y });
+  if (writes.length > MAX_RECENT_WRITES) writes.shift();
+  recentWrites.set(label, writes);
 }
 
 /** 缓存优先；无记录时（启动后首次操作）回退到实测。 */

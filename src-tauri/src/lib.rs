@@ -6,12 +6,11 @@ mod config;
 mod error;
 pub mod model;
 mod store;
+mod tray;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::menu::{MenuBuilder, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
 use browser::BrowserManager;
@@ -111,12 +110,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(state)
         .setup(|app| {
-            setup_tray(app)?;
+            tray::setup(app)?;
             // 全局唤起输入条：快捷键来自设置（默认 Alt+Q）。
             // 注册失败（被别的软件占用）不能让应用起不来，只记日志。
             #[cfg(desktop)]
             {
-                use tauri::Emitter;
                 use tauri_plugin_global_shortcut::ShortcutState;
 
                 let hotkey = app
@@ -145,6 +143,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::set_panel_visible,
             commands::browser_status,
             commands::send_message,
             commands::cancel_message,
@@ -176,70 +175,4 @@ pub fn run() {
                 }
             }
         });
-}
-
-/// 托盘/菜单唤起窗口：必须先 unminimize，最小化状态下 show() 不会还原窗口。
-/// 与前端 windows.ts 的 showWindow 保持同一语义，避免两处行为漂移。
-fn restore_window(win: &tauri::WebviewWindow) {
-    let _ = win.unminimize();
-    let _ = win.show();
-    let _ = win.set_focus();
-}
-
-fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let show_orb = MenuItem::new(app, "显示悬浮球", true, None::<&str>)?;
-    let open_main = MenuItem::new(app, "打开主窗口", true, None::<&str>)?;
-    let quit = MenuItem::new(app, "退出", true, None::<&str>)?;
-    let menu = MenuBuilder::new(app)
-        .item(&show_orb)
-        .item(&open_main)
-        .item(&quit)
-        .build()?;
-
-    let show_orb_id = show_orb.id().clone();
-    let open_main_id = open_main.id().clone();
-    let quit_id = quit.id().clone();
-    let icon = app.default_window_icon().cloned().expect("应用图标");
-
-    TrayIconBuilder::new()
-        .icon(icon)
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(move |app, event| match event.id.as_ref() {
-            id if id == show_orb_id.as_ref() => {
-                if let Some(win) = app.get_webview_window("panel") {
-                    restore_window(&win);
-                }
-            }
-            id if id == open_main_id.as_ref() => {
-                if let Some(win) = app.get_webview_window("main") {
-                    restore_window(&win);
-                }
-            }
-            id if id == quit_id.as_ref() => {
-                // 注册时 manage 的是 Arc<AppState>（run 第 73 行），Tauri 按 TypeId
-                // 精确匹配状态，这里必须取同样的类型，否则恒为 None、浏览器不回收。
-                if let Some(state) = app.try_state::<Arc<AppState>>() {
-                    state.browser.shutdown();
-                }
-                app.exit(0);
-            }
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let app = tray.app_handle();
-                if let Some(win) = app.get_webview_window("panel") {
-                    restore_window(&win);
-                }
-            }
-        })
-        .build(app)?;
-
-    Ok(())
 }

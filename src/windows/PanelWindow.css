@@ -276,6 +276,38 @@
   border-radius: 3px;
 }
 
+/* 悬浮球右键菜单：贴着球上方，窗口收起态会临时加高来容纳它。 */
+
+.panel-orb-menu {
+  position: fixed;
+  z-index: 60;
+  right: 6px;
+  bottom: 62px;
+  width: 120px;
+  padding: 5px;
+  box-sizing: border-box;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--separator);
+  box-shadow: var(--shadow-3);
+}
+
+.panel-orb-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  transition: background var(--dur) var(--ease);
+}
+
+.panel-orb-menu-item:hover {
+  background: var(--surface-hover);
+}
+
 /* ── 球行 ── */
 
 .panel-orb-row {
