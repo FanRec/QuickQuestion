@@ -129,20 +129,24 @@ jobs:
       # 扫 .deb 与 .AppImage 里的每一个 ELF，而不只是主程序——打包时被拷进 AppImage 的
       # 系统库同样会抬高门槛。
       - name: 校验产物 glibc 下限
-        # 脚本用了 pipefail 与 <<<，都是 Bash 语法；ubuntu:22.04 容器默认是 sh/dash，
-        # 不指定会在第一行 `set -euo pipefail` 直接退出，还没开始校验 glibc。
+        # 脚本用了 pipefail 与 <<<，都是 Bash 语法；ubuntu:22.04 容器默认是 sh/dash。
+        # GitHub 的 bash shell 还会自动加 -o pipefail，所以管道里任何 `head` 提前
+        # 关闭读端都会让上游收到 SIGPIPE（exit 141）；下面一律用 find -quit / awk 读取。
         shell: bash
         run: |
           set -euo pipefail
-          floor=$(ldd --version | head -1 | grep -oE '[0-9]+\.[0-9]+$')
+          floor=$(ldd --version | awk 'NR==1 {print $NF}')
           echo "构建基线 glibc：$floor"
 
           work=$(mktemp -d)
-          deb=$(ls src-tauri/target/release/bundle/deb/*.deb | head -1)
+          deb=$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)
+          [ -n "$deb" ] || { echo "::error::未找到 .deb 产物"; exit 1; }
           dpkg-deb -x "$deb" "$work/deb"
           echo "deb 声明的运行时依赖：$(dpkg-deb -f "$deb" Depends)"
 
-          app=$(realpath "$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)")
+          app=$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' -print -quit)
+          [ -n "$app" ] || { echo "::error::未找到 .AppImage 产物"; exit 1; }
+          app=$(realpath "$app")
           ( cd "$work" && chmod +x "$app" && "$app" --appimage-extract >/dev/null )
           [ -d "$work/squashfs-root" ] || { echo "::error::AppImage 解包失败"; exit 1; }
 
