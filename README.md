@@ -31,7 +31,7 @@
 
 ## 环境要求
 
-- Windows 10/11
+- Windows 10/11；或 Linux（glibc ≥ 2.35 且系统提供 webkit2gtk-4.1：Ubuntu 22.04+ / Debian 12+ / Fedora 40+）
 - 已安装 Edge 或 Chrome
 - 一个能登录 [chat.deepseek.com](https://chat.deepseek.com) 的账号
 
@@ -43,6 +43,7 @@ macOS（`.dmg`，按芯片选择 Apple Silicon / Intel 版）、Linux（`.AppIma
 安装包未签名：Windows 的 SmartScreen 提示时点「更多信息 → 仍要运行」；
 macOS 首次打开若被拦截，右键 App →「打开」，或执行
 `xattr -cr "/Applications/QuickQuestion.app"`。
+Linux 包的 glibc 与 webkit2gtk-4.1 要求见上方「环境要求」，不满足时启动即报缺库。
 
 ## 从源码构建
 

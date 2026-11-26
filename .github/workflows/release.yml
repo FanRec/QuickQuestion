@@ -8,6 +8,17 @@ on:
     tags:
       - "v*"
 
+# 两个 job 共用同一段发布说明，避免各平台各写一份、后写歪
+env:
+  RELEASE_BODY: >-
+    Windows 包未签名：SmartScreen 提示时点「更多信息 → 仍要运行」。
+    macOS 包未签名：首次打开若被拦截，请右键 App →「打开」，
+    或执行 xattr -cr "/Applications/QuickQuestion.app"。
+    Linux 包需要 glibc 2.35 及以上，且系统提供 webkit2gtk-4.1
+    （Ubuntu 22.04+ / Debian 12+ / Fedora 40+）；更早的发行版会报
+    GLIBC_2.xx 或 libwebkit2gtk-4.1.so.0 not found。
+    需要 Microsoft Edge 或 Chrome，并在 chat.deepseek.com 登录。
+
 jobs:
   publish:
     permissions:
@@ -18,8 +29,6 @@ jobs:
         include:
           - platform: "windows-latest"
             args: ""
-          - platform: "ubuntu-latest"
-            args: ""
           - platform: "macos-latest" # Apple Silicon（M1 及以上）
             args: "--target aarch64-apple-darwin"
           - platform: "macos-latest" # Intel 芯片
@@ -28,12 +37,6 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: 安装 Linux 打包依赖（Tauri v2 官方清单）
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
       - name: 安装 Node
         uses: actions/setup-node@v4
@@ -61,11 +64,97 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "QuickQuestion v__VERSION__"
-          releaseBody: >-
-            Windows 包未签名：SmartScreen 提示时点「更多信息 → 仍要运行」。
-            macOS 包未签名：首次打开若被拦截，请右键 App →「打开」，
-            或执行 xattr -cr "/Applications/QuickQuestion.app"。
-            需要 Microsoft Edge 或 Chrome，并在 chat.deepseek.com 登录。
+          releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  # Linux 单独一个 job，构建跑在钉死的 ubuntu:22.04 容器里。
+  # 原因：Rust 二进制动态链接宿主的 libc，产物的 glibc 下限 = 构建机 glibc 版本。
+  # ubuntu-latest 已是 24.04（glibc 2.39）、正迁往 26.04（glibc 2.42），
+  # 在它上面构建出的 .deb / .AppImage 在 22.04（glibc 2.35）上会一启动就崩。
+  # 钉容器镜像 = glibc 下限由我们决定，不再随 GitHub runner 镜像漂移。
+  publish-linux:
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:22.04
+    steps:
+      # 容器镜像里没有 git，checkout 之前必须先装上
+      - name: 安装容器基础工具
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git curl ca-certificates build-essential pkg-config file wget patchelf zstd
+
+      - uses: actions/checkout@v4
+
+      - name: 安装 Tauri Linux 打包依赖（Tauri v2 官方清单）
+        run: |
+          apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: 安装 Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Rust 编译产物
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 构建并上传 Release 草稿
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "QuickQuestion v__VERSION__"
+          releaseBody: ${{ env.RELEASE_BODY }}
+          releaseDraft: true
+          prerelease: false
+
+      # 把「构建机 glibc 泄漏进产物」从隐性事故变成构建期红灯。
+      # 下限取容器自身的 glibc，不写死数字：换镜像时断言自动跟着走，避免两份真值打架。
+      # 扫 .deb 与 .AppImage 里的每一个 ELF，而不只是主程序——打包时被拷进 AppImage 的
+      # 系统库同样会抬高门槛。
+      - name: 校验产物 glibc 下限
+        run: |
+          set -euo pipefail
+          floor=$(ldd --version | head -1 | grep -oE '[0-9]+\.[0-9]+$')
+          echo "构建基线 glibc：$floor"
+
+          work=$(mktemp -d)
+          deb=$(ls src-tauri/target/release/bundle/deb/*.deb | head -1)
+          dpkg-deb -x "$deb" "$work/deb"
+          echo "deb 声明的运行时依赖：$(dpkg-deb -f "$deb" Depends)"
+
+          app=$(realpath "$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)")
+          ( cd "$work" && chmod +x "$app" && "$app" --appimage-extract >/dev/null )
+          [ -d "$work/squashfs-root" ] || { echo "::error::AppImage 解包失败"; exit 1; }
+
+          fail=0
+          elfs=$(find "$work" -type f -print0 | xargs -0 file | awk -F: '/ELF/{print $1}')
+          count=$(printf '%s\n' "$elfs" | grep -c . || true)
+          [ "$count" -gt 0 ] || { echo "::error::未扫到任何 ELF，产物结构异常"; exit 1; }
+          while read -r f; do
+            [ -n "$f" ] || continue
+            max=$(objdump -T "$f" 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -Vu | tail -1) || true
+            [ -n "$max" ] || continue
+            if [ "$(printf '%s\n' "$floor" "$max" | sort -V | tail -1)" != "$floor" ]; then
+              echo "::error file=$f::需要 GLIBC_$max，超出构建基线 $floor"
+              fail=1
+            fi
+          done <<< "$elfs"
+          echo "扫描 $count 个 ELF 结束，基线 GLIBC_$floor"
+          exit $fail
