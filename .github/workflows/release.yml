@@ -129,6 +129,9 @@ jobs:
       # 扫 .deb 与 .AppImage 里的每一个 ELF，而不只是主程序——打包时被拷进 AppImage 的
       # 系统库同样会抬高门槛。
       - name: 校验产物 glibc 下限
+        # 脚本用了 pipefail 与 <<<，都是 Bash 语法；ubuntu:22.04 容器默认是 sh/dash，
+        # 不指定会在第一行 `set -euo pipefail` 直接退出，还没开始校验 glibc。
+        shell: bash
         run: |
           set -euo pipefail
           floor=$(ldd --version | head -1 | grep -oE '[0-9]+\.[0-9]+$')
