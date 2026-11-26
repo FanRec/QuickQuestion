@@ -150,6 +150,14 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
   useEffect(() => {
     const ac = new AbortController();
     onStream((payload) => {
+      // 后端在启动轮询前广播本轮 id。IPC 返回可能更慢，先认领 id，
+      // 否则早到的 delta 会被 pendingExchangeIdRef=null 吞掉，气泡永久停在思考中。
+      if (payload.type === "start") {
+        if (streamingRef.current && !pendingExchangeIdRef.current) {
+          pendingExchangeIdRef.current = payload.exchangeId;
+        }
+        return;
+      }
       // 只处理本实例发起的问答，避免两个实例互相污染。
       if (!streamingRef.current) return;
       // 后端是全局广播：只认本轮 exchangeId，旧轮残留事件直接丢。
@@ -464,7 +472,9 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
         </div>
       )}
 
-      {activeTitle && !newSession && (
+      {/* 流式期间接续行必然是旧值：新会话的标题要到 done 的 qq://active 才到。
+          与主窗口一致，回复期间不显示，避免出现"正在回复却写着上一轮会话"。 */}
+      {!streaming && activeTitle && !newSession && (
         <div className="composer-context">
           <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
             <path d="M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2z" fill="currentColor" />
@@ -472,7 +482,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
           接续：{activeTitle}
         </div>
       )}
-      {newSession && (
+      {!streaming && newSession && (
         <div className="composer-context">
           <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
             <path d="M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2z" fill="currentColor" />
@@ -480,7 +490,7 @@ export function Composer({ variant, onContentHeight, onClose, onBusyChange }: Co
           本次将开启新会话
         </div>
       )}
-      {!activeTitle && !newSession && (
+      {!streaming && !activeTitle && !newSession && (
         <div className="composer-context composer-context--muted">
           <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
             <path d="M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2z" fill="currentColor" />

@@ -189,6 +189,13 @@ async fn send_inner(
     let app_for_task = app.clone();
     let state_for_task = state.clone();
     let cdp_for_task = cdp.clone();
+    // 先广播本轮 id，再启动轮询。前端 streamingRef 已在 submit 同步置位，
+    // 因此即使 delta 比 send_message 的 IPC 返回更早到达，也能认领这一轮。
+    // 没有这条 start，早到事件会被 pendingExchangeIdRef=null 吞掉，气泡永久停在思考中。
+    let _ = app.emit(
+        "qq://stream",
+        serde_json::json!({ "type": "start", "exchangeId": exchange_id }),
+    );
     cdp.clone().spawn_reply_poller(quiet_ms);
     let question_text = text.clone();
     let session_for_task = chosen.id.clone();

@@ -211,6 +211,13 @@ export function MainWindow() {
         void loadSessions();
       }, ac.signal),
       onStream((payload) => {
+        // 见 Composer：start 先于轮询发出，IPC 返回可能更慢，先认领 id。
+        if (payload.type === "start") {
+          if (streamingRef.current && !pendingExchangeIdRef.current) {
+            pendingExchangeIdRef.current = payload.exchangeId;
+          }
+          return;
+        }
         if (!streamingRef.current) return;
         const mine = pendingExchangeIdRef.current;
         if (!mine || payload.exchangeId !== mine) return;

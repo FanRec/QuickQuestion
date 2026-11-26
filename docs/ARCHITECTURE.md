@@ -116,7 +116,7 @@ struct Exchange {
 ## 5. 窗口通信
 
 - 窗口间不直接通信，统一经 Rust 中转：前端 A `invoke` → Rust `emit` → 前端 B `listen`。
-- 事件命名 `qq://` 前缀：`stream`（delta/done/error）、`active`（网页当前会话；
+- 事件命名 `qq://` 前缀：`stream`（start/delta/done/error；start 在轮询启动前携带本轮 exchangeId，让前端早于 IPC 返回认领本轮）、`active`（网页当前会话；
   发送成功后与手动切换后都会广播）、`refresh`（数据已变，请重载）、`select`（定位某条问答）、
   `hotkey-input`、`settings-changed`。
 - 后端事件是全局广播：每个实例用 `pendingExchangeIdRef` 只认自己发起的那一轮。

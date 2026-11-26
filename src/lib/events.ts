@@ -33,6 +33,8 @@ function guarded<T>(
 }
 
 export type StreamPayload =
+  /** 本轮 exchangeId 的权威广播：后端先发它，再开始 delta/done。 */
+  | { type: "start"; exchangeId: string }
   | { type: "delta"; exchangeId: string; text: string }
   | { type: "done"; exchangeId: string; text: string }
   | { type: "error"; exchangeId: string; message: string; kind?: string };
