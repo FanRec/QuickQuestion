@@ -232,7 +232,10 @@ body{margin:0}
   background-repeat:no-repeat;background-size:100% 100%;pointer-events:none;
 }
 .qq-mascot{
-  position:absolute;right:8px;bottom:-8px;width:270px;height:270px;
+  position:absolute;right:8px;bottom:-8px;width:270px;
+  /* mascot-face 是 420×249：宽度 270 时高度约 160。
+     原先写死 height:270 会让 contain 在正方形框里垂直居中，吉祥物整体上移。 */
+  aspect-ratio:420 / 249;
   background-image:var(--qq-mascot-image);
   background-repeat:no-repeat;background-size:contain;pointer-events:none;
 }
