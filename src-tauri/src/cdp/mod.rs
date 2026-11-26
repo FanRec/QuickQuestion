@@ -127,6 +127,9 @@ fn mark_reply_js(msg_json: &str) -> String {
   }}
   window.__qqPrevTexts = texts;
   window.__qqPrevAnswer = lastAnswer;
+  // 文本锚点在重复提问时会失配；记录发送前的条数作为位置锚点，
+  // 页面重挂载丢掉 data-qq-prev 时仍能区分"此后新增"。
+  window.__qqPrevCount = list.length;
   return String(list.length);
 }})()
 "#,
@@ -162,12 +165,16 @@ const READ_REPLY_JS: &str = r#"
   // 判断"这条是不是发送后才出现的"。
   var prevTexts = window.__qqPrevTexts || [];
   var prevAnswer = window.__qqPrevAnswer || '';
+  var prevCount = window.__qqPrevCount || 0;
   var lastPrev = -1;
   for (var i = 0; i < list.length; i++) {
     if (list[i].hasAttribute('data-qq-prev')) lastPrev = i;
   }
   function isNew(idx) {
     if (lastPrev >= 0) return idx > lastPrev;
+    // 属性标记全丢时优先用发送前的条数做位置判据：
+    // 文本快照在"重复问同一个短问题"时会把新消息误判为旧消息。
+    if (prevCount > 0 && list.length >= prevCount) return idx >= prevCount;
     return prevTexts.indexOf(norm(list[idx].innerText)) < 0;
   }
 
@@ -186,14 +193,25 @@ const READ_REPLY_JS: &str = r#"
       anchor = j;
       break;
     }
-    // 锚点还没出现 = 本轮用户消息尚未挂载。**绝不退回"最后一条未打标"**：
-    // 那只证明发送时它不存在，不能证明它是本轮产生的。
-    if (anchor < 0) return miss;
-    var n = list[anchor].nextElementSibling;
-    while (n && !n.querySelector('.ds-assistant-message-main-content')) n = n.nextElementSibling;
-    // 用户消息已挂载、助手节点还没渲染：同样继续等，不要拿别的节点顶替。
-    if (!n) return miss;
-    box = n;
+    if (anchor >= 0) {
+      var n = list[anchor].nextElementSibling;
+      while (n && !n.querySelector('.ds-assistant-message-main-content')) n = n.nextElementSibling;
+      // 用户消息已挂载、助手节点还没渲染：同样继续等，不要拿别的节点顶替。
+      if (n) box = n;
+    }
+    // 文本锚点失配（页面折叠长问题 / 重挂载丢标记）时，按位置认新增助手消息。
+    // 必须同时满足：发送后才出现、且不是上一轮答案——否则会闪旧答案。
+    // 用户消息未挂载时这里也认不到，仍然继续等。
+    if (!box) {
+      for (var k = list.length - 1; k >= 0; k--) {
+        if (!list[k].querySelector('.ds-assistant-message-main-content')) continue;
+        if (!isNew(k)) continue;
+        if (prevAnswer && norm(list[k].innerText) === prevAnswer) continue;
+        box = list[k];
+        break;
+      }
+    }
+    if (!box) return miss;
   } else {
     // 纯图片提问没有可锚定的文本，只能按位置认：发送后新增的助手消息，
     // 且不能是发送时就已存在的最后一条答案（思考阶段会先闪出上一轮回答）。
